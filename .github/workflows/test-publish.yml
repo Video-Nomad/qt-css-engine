@@ -24,10 +24,10 @@ jobs:
         run: uv build
 
       - name: Smoke test wheel
-        run: uv run --isolated --no-project --with dist/*.whl -c "import qt_css_engine"
+        run: uv run --isolated --no-project --with dist/*.whl -- python -c "import qt_css_engine"
 
       - name: Smoke test sdist
-        run: uv run --isolated --no-project --with dist/*.tar.gz -c "import qt_css_engine"
+        run: uv run --isolated --no-project --with dist/*.tar.gz -- python -c "import qt_css_engine"
 
       - name: Publish
         run: uv publish --index testpypi
