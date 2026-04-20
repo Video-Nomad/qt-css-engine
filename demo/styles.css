@@ -1,0 +1,278 @@
+#box {
+    background-color: #444444;
+    color: white;
+    border: 3px solid green;
+    border-radius: 4px;
+    box-shadow: 0 0 0 white;
+    cursor: pointer;
+    transition: all 300ms ease;
+}
+
+#box:hover {
+    box-shadow: 0 0 50 blue;
+}
+
+.btn,
+.label {
+    background-color: #444444;
+    color: white;
+    border: 3px solid green;
+    border-radius: 4px;
+    padding: 10px 20px;
+    transition: all 300ms ease;
+}
+
+.btn:hover,
+.label:hover {
+    background-color: orange;
+    border-color: red;
+}
+
+.btn:pressed,
+.label:pressed {
+    color: white;
+    background-color: #505050;
+    border-color: white;
+}
+
+.btn-container .btn {
+    background-color: #444444;
+    color: white;
+    border: 3px solid green;
+    border-bottom-color: blue;
+    border-radius: 4px;
+    padding: 10px 20px;
+    transition: background-color 300ms ease, color 200ms linear, border-color 600ms;
+}
+
+.btn-container .btn:pressed {
+    color: white;
+    background-color: black;
+    border-color: white;
+}
+
+.btn-container .btn:hover {
+    color: red;
+    background-color: #22dd22;
+    border-color: red;
+}
+
+#reveal {
+    background-color: #ff5555;
+    color: white;
+    opacity: 0.01;
+    box-shadow: 0 0 0 white;
+    transition: opacity 400ms;
+    transition: box-shadow 400ms;
+}
+
+#reveal:hover {
+    opacity: 1.0;
+    box-shadow: 0 0 30 blue;
+}
+
+.sidebar {
+    background-color: red;
+    border: 3px solid orange;
+    border-radius: 8px;
+    padding: 20px;
+    transition: border-radius 1000ms ease;
+}
+
+.sidebar:hover {
+    border-radius: 16px;
+}
+
+.sidebar .action {
+    background-color: #663399;
+    color: white;
+    min-height: 20px;
+    max-height: 20px;
+    border-width: 3px;
+    border-style: solid;
+    border-radius: 4px;
+    border-color: green;
+    box-shadow: 0 0 20 black;
+    transition: all 300ms ease;
+}
+
+.sidebar .action:hover {
+    box-shadow: 0 0 20 blue;
+}
+
+/* Text editor — tests :focus transitions */
+.editor {
+    background-color: #1e1e1e;
+    color: #cccccc;
+    border-width: 2px;
+    border-style: solid;
+    border-color: #444444;
+    border-radius: 8px;
+    padding: 6px;
+    margin: 5px;
+    box-shadow: 0 0 0 black;
+    transition: all 200ms ease;
+}
+
+.editor:focus {
+    border-color: #4d88ff;
+    box-shadow: 0 0 6 #4d88ff;
+}
+
+/* Tab toggle — two QLabels sharing class "tab"; clicking sets class to "tab active" */
+.tab {
+    background-color: #1e1e1e;
+    color: #666666;
+    border-width: 0px;
+    border-bottom-width: 3px;
+    border-style: solid;
+    border-color: transparent;
+    border-radius: 0px;
+    padding: 10px 28px;
+    transition: all 250ms ease;
+}
+
+.tab:hover {
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    background-color: red;
+}
+
+.tab.active {
+    background-color: #2d2d2d;
+    color: #ffffff;
+    border-color: #4d88ff;
+}
+
+.tab.active:hover {
+    background-color: blue;
+}
+
+.size-hint-container .btn-custom {
+    background-color: #444444;
+    border: 3px solid blue;
+    border-radius: 4px;
+    padding: 10px 20px;
+    margin-right: 10px;
+    transition: width 0.6s ease;
+}
+
+.size-hint-container .btn-custom:hover {
+    width: 125px;
+}
+
+/* Multiple buttons in one container and multiple containers */
+
+.workspaces .ws-btn {
+    background-color: #444444;
+    border: 3px solid darkgray;
+    border-radius: 4px;
+    padding: 5px 10px;
+    margin-right: 10px;
+    transition: min-width 1.0s ease;
+    transition: max-width 1.0s ease;
+}
+
+.workspaces .ws-btn:hover {
+    min-width: 200px;
+    max-width: 200px;
+}
+
+/* DynamicPropertyChange test — rotating .active class changes width + color */
+.cycle-btn {
+    background-color: #444444;
+    color: #aaaaaa;
+    border: 2px solid #555555;
+    border-radius: 4px;
+    padding: 8px 16px;
+    transition: all 300ms cubic-bezier(.53, -0.98, .52, 1.66);
+    transition: background-color 200ms ease;
+}
+
+.cycle-btn.active {
+    background-color: #4d88ff;
+    color: white;
+    border-color: #88aaff;
+    min-width: 140px;
+    max-width: 140px;
+    min-height: 30px;
+    max-height: 30px;
+}
+
+.cycle-btn:hover {
+    background-color: #666666;
+}
+
+.cycle-btn.active:hover {
+    background-color: #3366cc;
+}
+
+.workspaces .ws-btn .m-btn {
+    background-color: #444444;
+    border: 3px solid darkgray;
+    border-radius: 4px;
+    padding: 5px 10px;
+    margin-right: 10px;
+}
+
+.dynamic-label {
+    background-color: #0000ff;
+    color: white;
+    min-height: 40px;
+    max-height: 40px;
+    transition: all 1000ms ease-in-out;
+}
+
+.dynamic-label.state1 {
+    background-color: #ff0000;
+    max-width: 120px;
+    min-width: 120px;
+}
+
+.dynamic-label.state2 {
+    background-color: #00ff00;
+    color: black;
+    max-width: 150px;
+    min-width: 150px;
+}
+
+.dynamic-label:hover {
+    transition: background-color 200ms ease;
+    background-color: pink;
+}
+
+.checkable-btn {
+    background-color: red;
+    padding: 10px 20px;
+    transition: background-color 200ms ease;
+}
+
+.checkable-btn:pressed {
+    background-color: pink;
+}
+
+.checkable-btn:checked {
+    background-color: blue;
+}
+
+.checkable-btn:checked:pressed {
+    background-color: orange;
+}
+
+/* steps() easing demo — hover to see discrete jumps */
+.steps-btn {
+    background-color: #1a3a6b;
+    color: white;
+    border: 2px solid #2a5a9b;
+    border-radius: 4px;
+    padding: 8px 14px;
+}
+
+.steps-btn:hover {
+    background-color: #e85d04;
+}
+
+.steps-btn.s-jump-end   { transition: background-color 1500ms steps(5, jump-end); }
+.steps-btn.s-jump-start { transition: background-color 1500ms steps(5, jump-start); }
+.steps-btn.s-jump-none  { transition: background-color 1500ms steps(5, jump-none); }
+.steps-btn.s-step-start { transition: background-color 1500ms step-start; }

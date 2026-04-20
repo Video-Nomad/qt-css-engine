@@ -1,0 +1,95 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qt-css-engine"
+dynamic = ["version"]
+description = "CSS transition animations for PyQt6/PySide6 — extends static QSS with transition and other properties"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE.md"]
+authors = [
+    { name = "George Sladkovsky", email = "george.sladkovsky@gmail.com" },
+]
+requires-python = ">=3.14"
+keywords = [
+    "pyqt6",
+    "qt",
+    "css",
+    "animation",
+    "transition",
+    "stylesheet",
+    "qss",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Environment :: X11 Applications :: Qt",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: User Interfaces",
+]
+dependencies = ["tinycss2>=1.5.1"]
+
+[project.urls]
+Homepage = "https://github.com/Video-Nomad/qt_css_animation"
+Repository = "https://github.com/Video-Nomad/qt_css_animation"
+Issues = "https://github.com/Video-Nomad/qt_css_animation/issues"
+
+[dependency-groups]
+dev = [
+    "pyqt6>=6.11.0",
+    "pyqt6-stubs>=20250824",
+    "pytest>=8.0",
+    "pytest-cov>=7.1.0",
+    "pytest-qt>=4.5.0",
+]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["qt_css_engine"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.pyright]
+include = ["."]
+exclude = ["**/__pycache__", ".venv", "typings"]
+venv = ".venv"
+venvPath = "."
+typeCheckingMode = "strict"
+reportMissingImports = true
+reportUntypedFunctionDecorator = false
+pythonVersion = "3.14"
+pythonPlatform = "Windows"
+executionEnvironments = [{ root = "." }]
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+extend-exclude = ["__pycache__", ".github", ".vscode", "build", "docs", "demo"]
+
+[tool.ruff.lint]
+ignore = ["F405", "F403", "E741"]
+select = ["I", "F", "UP", "G004"]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+docstring-code-format = true
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true

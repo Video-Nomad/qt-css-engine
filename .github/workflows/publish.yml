@@ -1,0 +1,36 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    if: github.event.base_ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Build
+        run: uv build
+
+      - name: Smoke test wheel
+        run: uv run --isolated --no-project --with dist/*.whl -c "import qt_css_engine"
+
+      - name: Smoke test sdist
+        run: uv run --isolated --no-project --with dist/*.tar.gz -c "import qt_css_engine"
+
+      - name: Publish
+        run: uv publish
