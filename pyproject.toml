@@ -37,9 +37,9 @@ classifiers = [
 dependencies = ["tinycss2>=1.5.1"]
 
 [project.urls]
-Homepage = "https://github.com/Video-Nomad/qt_css_animation"
-Repository = "https://github.com/Video-Nomad/qt_css_animation"
-Issues = "https://github.com/Video-Nomad/qt_css_animation/issues"
+Homepage = "https://github.com/Video-Nomad/qt-css-engine"
+Repository = "https://github.com/Video-Nomad/qt-css-engine"
+Issues = "https://github.com/Video-Nomad/qt-css-engine/issues"
 
 [dependency-groups]
 dev = [
