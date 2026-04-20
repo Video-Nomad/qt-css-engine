@@ -131,7 +131,7 @@ transition: background 400ms -100ms ease;
 
 ## Supported properties
 
-Color values accepted everywhere a color is listed: named (`red`, `steelblue`, …), `#rrggbb`, `#aarrggbb`, `rgb()`, `rgba()`, `hsl()`, `hsla()`.
+Color values accepted everywhere a color is listed: named (`red`, `steelblue`, …), `#rrggbb`, `#rrggbbaa`, `rgb()`, `rgba()`, `hsl()`, `hsla()`.
 
 Numeric values accepted everywhere a length is listed: `<n>px`, `<n>pt`, `<n>em`.
 
