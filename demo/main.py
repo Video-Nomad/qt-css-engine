@@ -360,6 +360,7 @@ def main():
 
     # steps() easing demo — hover each button to see discrete color jumps
     steps_row = QFrame()
+    steps_row.setProperty("class", "steps-row")
     steps_row_layout = QHBoxLayout(steps_row)
     steps_row_layout.setContentsMargins(0, 0, 0, 0)
     steps_row_layout.setSpacing(6)
@@ -374,6 +375,24 @@ def main():
         b.setProperty("class", f"steps-btn {variant}")
         steps_row_layout.addWidget(b)
     layout.addWidget(steps_row)
+
+    # Fallthrough test — right and middle buttons trigger parent widget
+    fallthrough_base = QFrame()
+    fallthrough_base.setProperty("class", "fallthrough-row")
+    fallthrough_layout = QHBoxLayout(fallthrough_base)
+    fallthrough_layout.setContentsMargins(0, 0, 0, 0)
+    fallthrough_layout.setSpacing(6)
+    fallthrough_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+    for variant, label in (
+        ("btn1", "btn1"),
+        ("btn2", "btn2"),
+        ("btn3", "btn3"),
+        ("btn4", "btn4"),
+    ):
+        b = QPushButton(label)
+        b.setProperty("class", f"fallthrough-btn {variant}")
+        fallthrough_layout.addWidget(b)
+    layout.addWidget(fallthrough_base)
 
     window.show()
     sys.exit(app.exec())

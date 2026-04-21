@@ -8,7 +8,8 @@ from .handlers import (
     GenericPropertyAnimation,
     OpacityAnimation,
 )
-from .qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QTimer
+from .qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, Qt, QTimer
+from .qt_compat.QtGui import QMouseEvent
 from .qt_compat.QtWidgets import QAbstractButton, QApplication, QWidget
 from .types import Animation, EvaluationCause, InternalWriteReason, WidgetContext
 from .utils import (
@@ -123,7 +124,8 @@ class TransitionEngine(QObject):
             updated = self._update_pseudos(ctx.active_pseudos, t)
             cause = EvaluationCause.PSEUDO_STATE
             if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
-                cause = self._prepare_clicked(watched, ctx, updated)
+                if isinstance(event, QMouseEvent) and event.button() == Qt.MouseButton.LeftButton:
+                    cause = self._prepare_clicked(watched, ctx, updated)
             if updated != ctx.active_pseudos:
                 ctx.active_pseudos = updated
                 self._evaluate_widget_state(watched, cause=cause)
