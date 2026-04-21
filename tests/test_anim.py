@@ -2372,3 +2372,271 @@ def test_update_spec_changes_easing_curve(app: QApplication) -> None:
     assert anim.anim.easingCurve().type() == QEasingCurve.Type.InOutCubic
 
     destroy(widget)
+
+
+# ---------------------------------------------------------------------------
+# :clicked pseudo-class — engine
+# ---------------------------------------------------------------------------
+
+
+def _click_widget(engine: TransitionEngine, widget: QWidget) -> EvaluationCause:
+    """Simulate a mouse press through the full _prepare_clicked → evaluate path."""
+    ctx = engine._ctx(widget)
+    updated = engine._update_pseudos(ctx.active_pseudos, QEvent.Type.MouseButtonPress)
+    cause = engine._prepare_clicked(widget, ctx, updated)
+    if updated != ctx.active_pseudos:
+        ctx.active_pseudos = updated
+        engine._evaluate_widget_state(widget, cause=cause)
+        if cause is EvaluationCause.CLICKED_ACTIVATION:
+            engine._finish_clicked_activation(widget, ctx)
+    return cause
+
+
+def test_clicked_prepare_returns_activated_cause(app: QApplication) -> None:
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 300ms; }
+        .btn:clicked { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    cause = _click_widget(engine, widget)
+    assert cause is EvaluationCause.CLICKED_ACTIVATION
+    destroy(widget)
+
+
+def test_clicked_prepare_returns_pseudo_state_when_no_rules(app: QApplication) -> None:
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 300ms; }
+        .btn:hover { background-color: green; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    cause = _click_widget(engine, widget)
+    assert cause is EvaluationCause.PSEUDO_STATE
+    destroy(widget)
+
+
+def test_clicked_added_to_active_pseudos(app: QApplication) -> None:
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 300ms; }
+        .btn:clicked { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    _click_widget(engine, widget)
+    assert ":clicked" in engine._ctx(widget).active_pseudos
+    destroy(widget)
+
+
+def test_clicked_animation_starts_toward_clicked_target(app: QApplication) -> None:
+    """Forward animation must target the :clicked value, not the base value."""
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 500ms; }
+        .btn:clicked { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    _click_widget(engine, widget)
+
+    assert _has_anim(engine, widget, "background-color")
+    anim = _get_anim(engine, widget, "background-color")
+    assert isinstance(anim, ColorAnimation)
+    assert anim.anim.state() == QAbstractAnimation.State.Running
+    # End color must be red (#ff0000)
+    assert anim.end_color.red() > 200
+    assert anim.end_color.green() < 50
+    assert anim.end_color.blue() < 50
+    destroy(widget)
+
+
+def test_clicked_priority_beats_pressed(app: QApplication) -> None:
+    """:clicked (priority 3) must win over :pressed (priority 2) when both active."""
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 500ms; }
+        .btn:pressed { background-color: green; }
+        .btn:clicked { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    _click_widget(engine, widget)  # adds both :pressed and :clicked
+
+    ctx = engine._ctx(widget)
+    assert ":pressed" in ctx.active_pseudos
+    assert ":clicked" in ctx.active_pseudos
+
+    anim = _get_anim(engine, widget, "background-color")
+    assert isinstance(anim, ColorAnimation)
+    # Target must be red (:clicked) not green (:pressed)
+    assert anim.end_color.red() > 200
+    assert anim.end_color.green() < 50
+    destroy(widget)
+
+
+def test_clicked_anim_props_pre_populated(app: QApplication) -> None:
+    """`clicked_anim_props` must contain the props declared in the :clicked rule."""
+    engine = make_engine("""
+        .btn { background-color: blue; color: white; transition: background-color 400ms, color 400ms; }
+        .btn:clicked { background-color: red; color: black; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    ctx = engine._ctx(widget)
+    updated = engine._update_pseudos(ctx.active_pseudos, QEvent.Type.MouseButtonPress)
+    engine._prepare_clicked(widget, ctx, updated)
+
+    assert "background-color" in ctx.clicked_anim_props
+    assert "color" in ctx.clicked_anim_props
+    destroy(widget)
+
+
+def test_clicked_reignition_ignored_during_forward_animation(app: QApplication) -> None:
+    """Re-clicking while :clicked is active must not restart or increment the gen counter."""
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 1000ms; }
+        .btn:clicked { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    _click_widget(engine, widget)
+    ctx = engine._ctx(widget)
+    gen_before = ctx.clicked_anim_gen
+    props_before = set(ctx.clicked_anim_props)
+
+    # Second click while animation still running
+    cause2 = _click_widget(engine, widget)
+
+    assert cause2 is EvaluationCause.PSEUDO_STATE  # not CLICKED_ACTIVATION
+    assert ctx.clicked_anim_gen == gen_before  # gen unchanged
+    assert ctx.clicked_anim_props == props_before  # set unchanged
+    destroy(widget)
+
+
+def test_clicked_snap_deactivates_on_next_tick(app: QApplication) -> None:
+    """When all :clicked props snap (duration=0), :clicked is removed in the next event-loop tick."""
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 0ms; }
+        .btn:clicked { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    _click_widget(engine, widget)
+    ctx = engine._ctx(widget)
+
+    # Immediately after click: :clicked still in pseudos (timer not fired yet)
+    assert ":clicked" in ctx.active_pseudos
+
+    # After processing pending events (QTimer.singleShot(0) fires): :clicked removed
+    QApplication.processEvents()
+    assert ":clicked" not in ctx.active_pseudos
+    destroy(widget)
+
+
+def test_clicked_deactivates_after_forward_animation_completes(app: QApplication, qtbot: QtBot) -> None:
+    """:clicked must be removed from active_pseudos once the forward animation finishes."""
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 60ms; }
+        .btn:clicked { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    _click_widget(engine, widget)
+    assert ":clicked" in engine._ctx(widget).active_pseudos
+
+    qtbot.wait(150)  # > 60ms animation duration
+
+    assert ":clicked" not in engine._ctx(widget).active_pseudos
+    destroy(widget)
+
+
+def test_clicked_reverse_animation_fires_after_deactivation(app: QApplication, qtbot: QtBot) -> None:
+    """After :clicked deactivates, a reverse animation toward base must start."""
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 60ms; }
+        .btn:clicked { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    _click_widget(engine, widget)
+    # Forward animation running: target = red
+    anim = _get_anim(engine, widget, "background-color")
+    assert isinstance(anim, ColorAnimation)
+
+    qtbot.wait(150)  # forward anim finishes → :clicked deactivates → reverse starts
+
+    # After deactivation the same animation object is re-targeted toward blue
+    anim2 = _get_anim(engine, widget, "background-color")
+    assert isinstance(anim2, ColorAnimation)
+    assert anim2.end_color.blue() > 150  # target is blue (#0000ff)
+    assert anim2.end_color.red() < 50
+    destroy(widget)
+
+
+def test_clicked_destroyed_during_animation_no_crash(app: QApplication) -> None:
+    """Deleting the widget while the :clicked forward animation runs must not raise."""
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 1000ms; }
+        .btn:clicked { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    _click_widget(engine, widget)
+    assert _has_anim(engine, widget, "background-color")
+
+    destroy(widget)  # must not raise
+
+    assert id(widget) not in engine._contexts
+
+
+def test_clicked_context_cleaned_up_on_destroy(app: QApplication) -> None:
+    """clicked_anim_props and clicked_anim_callbacks must be empty after destroy."""
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 1000ms; }
+        .btn:clicked { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    _click_widget(engine, widget)
+    ctx = engine._ctx(widget)
+    assert ctx.clicked_anim_props  # non-empty while running
+
+    destroy(widget)
+
+    # Context is gone — no stale state
+    assert id(widget) not in engine._contexts
+
+
+def test_clicked_reload_clears_state(app: QApplication) -> None:
+    """reload_rules must discard :clicked from active_pseudos and clear tracking sets."""
+    engine = make_engine("""
+        .btn { background-color: blue; transition: background-color 1000ms; }
+        .btn:clicked { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "btn")
+
+    _click_widget(engine, widget)
+    ctx = engine._ctx(widget)
+    assert ":clicked" in ctx.active_pseudos
+
+    _, new_rules = extract_rules("""
+        .btn { background-color: blue; transition: background-color 1000ms; }
+        .btn:clicked { background-color: red; }
+    """)
+    engine.reload_rules(new_rules)
+
+    assert ":clicked" not in ctx.active_pseudos
+    assert not ctx.clicked_anim_props
+    assert not ctx.clicked_anim_callbacks
+    destroy(widget)

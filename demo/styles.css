@@ -276,3 +276,24 @@
 .steps-btn.s-jump-start { transition: background-color 1500ms steps(5, jump-start); }
 .steps-btn.s-jump-none  { transition: background-color 1500ms steps(5, jump-none); }
 .steps-btn.s-step-start { transition: background-color 1500ms step-start; }
+
+/* :clicked demo — animation always plays full forward then full reverse */
+.clicked-btn {
+    background-color: #2d2d2d;
+    color: #cccccc;
+    border: 2px solid #555555;
+    border-radius: 4px;
+    padding: 10px 24px;
+    transition: background-color 500ms ease, border-color 500ms ease, color 500ms ease;
+}
+
+.clicked-btn:hover {
+    background-color: #3d3d3d;
+    border-color: #777777;
+}
+
+.clicked-btn:clicked {
+    background-color: #1a6bcc;
+    border-color: #5599ff;
+    color: white;
+}

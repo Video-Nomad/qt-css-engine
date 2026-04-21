@@ -353,6 +353,11 @@ def main():
     checkable_btn.clicked.connect(_check)
     layout.addWidget(checkable_btn)
 
+    # :clicked demo — animation always plays full forward then full reverse
+    clicked_btn = QPushButton(":clicked — full round-trip animation")
+    clicked_btn.setProperty("class", "clicked-btn")
+    layout.addWidget(clicked_btn)
+
     # steps() easing demo — hover each button to see discrete color jumps
     steps_row = QFrame()
     steps_row_layout = QHBoxLayout(steps_row)

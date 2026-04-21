@@ -1283,3 +1283,86 @@ def test_transition_behavior_longhand_stripped_from_cleaned_qss() -> None:
     css = ".box { color: red; transition: color 200ms; transition-behavior: allow-discrete; }"
     cleaned, _ = extract_rules(css)
     assert "transition-behavior" not in cleaned
+
+
+# ---------------------------------------------------------------------------
+# :clicked pseudo-class — parser
+# ---------------------------------------------------------------------------
+
+
+def test_clicked_pseudo_recognised_in_pseudo_set() -> None:
+    css = ".btn { background-color: blue; } .btn:clicked { background-color: red; }"
+    _, rules = extract_rules(css)
+    rule = get_rule(rules, ".btn:clicked")
+    assert ":clicked" in rule.pseudo_set
+
+
+def test_clicked_base_selector_stripped_of_pseudo() -> None:
+    css = ".btn:clicked { background-color: red; }"
+    _, rules = extract_rules(css)
+    rule = get_rule(rules, ".btn:clicked")
+    assert rule.base_selector == ".btn"
+
+
+def test_clicked_transition_extracted() -> None:
+    css = ".btn { background-color: blue; transition: background-color 400ms ease; } .btn:clicked { background-color: red; }"
+    _, rules = extract_rules(css)
+    base = get_rule(rules, ".btn")
+    assert any(t.prop == "background-color" and t.duration_ms == 400 for t in base.transitions)
+
+
+def test_clicked_transition_in_pseudo_block_extracted() -> None:
+    css = ".btn { background-color: blue; } .btn:clicked { background-color: red; transition: background-color 300ms ease-in; }"
+    _, rules = extract_rules(css)
+    rule = get_rule(rules, ".btn:clicked")
+    assert len(rule.transitions) == 1
+    t = rule.transitions[0]
+    assert t.prop == "background-color"
+    assert t.duration_ms == 300
+    assert t.easing == "ease-in"
+
+
+def test_clicked_props_stripped_from_cleaned_qss_when_animated() -> None:
+    """background-color in :clicked block must be stripped so Qt doesn't apply it statically."""
+    css = """
+        .btn { background-color: blue; transition: background-color 300ms; }
+        .btn:clicked { background-color: red; }
+    """
+    cleaned, _ = extract_rules(css)
+    clicked_block = cleaned_block(cleaned, ".btn:clicked")
+    assert "background-color" not in clicked_block
+
+
+def test_clicked_base_block_not_stripped() -> None:
+    """background-color in base block must survive — engine reads it as the 'from' value."""
+    css = """
+        .btn { background-color: blue; transition: background-color 300ms; }
+        .btn:clicked { background-color: red; }
+    """
+    cleaned, _ = extract_rules(css)
+    base_block = cleaned_block(cleaned, ".btn")
+    assert "background-color" in base_block
+
+
+def test_clicked_and_hover_both_in_same_stylesheet() -> None:
+    """Parser must produce separate rules for :clicked and :hover on the same selector."""
+    css = """
+        .btn { background-color: blue; transition: background-color 200ms; }
+        .btn:hover { background-color: green; }
+        .btn:clicked { background-color: red; }
+    """
+    _, rules = extract_rules(css)
+    get_rule(rules, ".btn:hover")  # must exist
+    get_rule(rules, ".btn:clicked")  # must exist
+    clicked = get_rule(rules, ".btn:clicked")
+    assert ":clicked" in clicked.pseudo_set
+    assert ":hover" not in clicked.pseudo_set
+
+
+def test_clicked_not_confused_with_subcontrol() -> None:
+    """::clicked (double-colon) is a subcontrol, not the :clicked pseudo — must not match."""
+    css = ".btn::clicked { color: red; }"
+    _, rules = extract_rules(css)
+    rule = rules[0]
+    assert rule.subcontrol is True
+    assert ":clicked" not in rule.pseudo_set

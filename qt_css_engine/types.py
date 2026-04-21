@@ -20,6 +20,7 @@ class EvaluationCause(Enum):
     PSEUDO_STATE = auto()
     CLASS_CHANGE = auto()
     CLASS_ANIMATION_FINISH = auto()
+    CLICKED_ACTIVATION = auto()
     WINDOW_DEACTIVATE = auto()
     RULE_RELOAD = auto()
     DELAY_FIRE = auto()
@@ -33,6 +34,11 @@ class EvaluationCause(Enum):
     def is_class_driven(self) -> bool:
         """True when the evaluation was triggered by a class property change."""
         return self is EvaluationCause.CLASS_CHANGE
+
+    @property
+    def is_clicked_driven(self) -> bool:
+        """True when the evaluation was triggered by a :clicked pseudo activation."""
+        return self is EvaluationCause.CLICKED_ACTIVATION
 
 
 class InternalWriteReason(Enum):
@@ -64,6 +70,12 @@ class WidgetContext:
     # Per-property class-anim finished callbacks stored so they can be disconnected before
     # reconnecting — prevents accumulation of stale closures on rapid class changes.
     class_anim_callbacks: dict[str, Callable[[], None]] = field(default_factory=lambda: dict[str, Callable[[], None]]())
+    # :clicked forward-phase tracking — props we're waiting on before deactivating :clicked.
+    clicked_anim_props: set[str] = field(default_factory=lambda: set[str]())
+    clicked_anim_gen: int = 0
+    clicked_anim_callbacks: dict[str, Callable[[], None]] = field(
+        default_factory=lambda: dict[str, Callable[[], None]]()
+    )
 
 
 @dataclass

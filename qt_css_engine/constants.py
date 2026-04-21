@@ -38,8 +38,8 @@ BORDER_WIDTH_KEYWORDS: frozenset[str] = frozenset({"thin", "medium", "thick"})
 PSEUDO_ALIASES: dict[str, str] = {}
 
 # Animation pseudo-classes the engine knows about, in descending priority order.
-ANIMATION_PSEUDOS: frozenset[str] = frozenset({":pressed", ":hover", ":focus", ":checked"})
-ANIMATION_PSEUDO_PRIORITY: tuple[str, ...] = (":pressed", ":hover", ":focus", ":checked")
+ANIMATION_PSEUDOS: frozenset[str] = frozenset({":pressed", ":hover", ":focus", ":checked", ":clicked"})
+ANIMATION_PSEUDO_PRIORITY: tuple[str, ...] = (":clicked", ":pressed", ":hover", ":focus", ":checked")
 
 # ---------------------------------------------------------------------------
 # Engine property sets

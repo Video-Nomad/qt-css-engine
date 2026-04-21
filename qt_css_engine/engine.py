@@ -46,7 +46,7 @@ class TransitionEngine(QObject):
     and drives smooth property animations via Qt's animation framework.
     """
 
-    pseudo_priority: dict[str, int] = {"": 0, ":hover": 1, ":focus": 1, ":pressed": 2, ":checked": 1}
+    pseudo_priority: dict[str, int] = {"": 0, ":hover": 1, ":focus": 1, ":pressed": 2, ":checked": 1, ":clicked": 3}
 
     # Which effect wins the widget's single graphics-effect slot when both opacity and
     # box-shadow are declared on the same widget. The loser becomes a silent no-op.
@@ -121,9 +121,14 @@ class TransitionEngine(QObject):
         elif t in PSEUDO_EVENTS:
             ctx = self._ctx(watched)
             updated = self._update_pseudos(ctx.active_pseudos, t)
+            cause = EvaluationCause.PSEUDO_STATE
+            if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
+                cause = self._prepare_clicked(watched, ctx, updated)
             if updated != ctx.active_pseudos:
                 ctx.active_pseudos = updated
-                self._evaluate_widget_state(watched, cause=EvaluationCause.PSEUDO_STATE)
+                self._evaluate_widget_state(watched, cause=cause)
+                if cause is EvaluationCause.CLICKED_ACTIVATION:
+                    self._finish_clicked_activation(watched, ctx)
         return False
 
     def _on_polish(self, widget: QWidget) -> None:
@@ -183,6 +188,50 @@ class TransitionEngine(QObject):
             if stuck:
                 ctx.active_pseudos -= stuck
                 self._evaluate_widget_state(child, cause=EvaluationCause.WINDOW_DEACTIVATE)
+
+    def _prepare_clicked(self, widget: QWidget, ctx: WidgetContext, updated: set[str]) -> EvaluationCause:
+        """
+        If the widget has :clicked rules and :clicked is not already active, add :clicked to
+        *updated* and initialise clicked tracking on *ctx*.  Returns the EvaluationCause to use.
+        """
+        if ":clicked" in ctx.active_pseudos:
+            return EvaluationCause.PSEUDO_STATE  # Forward animation already running; ignore re-click.
+        if not any(":clicked" in rule.pseudo_set for rule in self._matching_rules(widget)):
+            return EvaluationCause.PSEUDO_STATE
+        updated.add(":clicked")
+        ctx.clicked_anim_gen += 1
+        ctx.clicked_anim_props.clear()
+        for rule in self._matching_rules(widget):
+            if ":clicked" in rule.pseudo_set:
+                ctx.clicked_anim_props.update(rule.properties.keys())
+        return EvaluationCause.CLICKED_ACTIVATION
+
+    def _finish_clicked_activation(self, widget: QWidget, ctx: WidgetContext) -> None:
+        """
+        Called after CLICKED_ACTIVATION evaluation.  Prune clicked_anim_props to only
+        properties with a running animation; if none remain (all snapped), schedule an
+        immediate deactivation so the reverse animation fires in the next event-loop tick.
+        """
+        ctx.clicked_anim_props = {
+            p
+            for p in ctx.clicked_anim_props
+            if p in ctx.active_animations and ctx.active_animations[p].anim.state() == QAbstractAnimation.State.Running
+        }
+        if not ctx.clicked_anim_props:
+            wid = id(widget)
+            gen = ctx.clicked_anim_gen
+            QTimer.singleShot(0, lambda: self._deactivate_clicked(widget, wid, gen))
+
+    def _deactivate_clicked(self, widget: QWidget, wid: int, gen: int) -> None:
+        """Remove :clicked from active_pseudos and re-evaluate to trigger the reverse animation."""
+        ctx = self._contexts.get(wid)
+        if ctx is None or gen != ctx.clicked_anim_gen or ":clicked" not in ctx.active_pseudos:
+            return
+        ctx.active_pseudos.discard(":clicked")
+        try:
+            self._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+        except RuntimeError:
+            pass
 
     def _connect_checkable(self, widget: QWidget) -> None:
         """Connect to toggled signal for checkable buttons and sync initial :checked state."""
@@ -373,6 +422,15 @@ class TransitionEngine(QObject):
                 except RuntimeError, TypeError:
                     pass
         ctx.class_anim_callbacks.clear()
+        for prop, cb in ctx.clicked_anim_callbacks.items():
+            anim_obj = ctx.active_animations.get(prop)
+            if anim_obj is not None:
+                try:
+                    anim_obj.anim.finished.disconnect(cb)
+                except RuntimeError, TypeError:
+                    pass
+        ctx.clicked_anim_callbacks.clear()
+        ctx.clicked_anim_props.clear()
         for anim_obj in ctx.active_animations.values():
             try:
                 anim_obj.anim.stop()
@@ -602,6 +660,33 @@ class TransitionEngine(QObject):
 
                 ctx.class_anim_callbacks[prop] = _on_class_anim_done
                 anim_obj.anim.finished.connect(_on_class_anim_done)
+
+            # Track :clicked forward-phase animations; deactivate :clicked when all finish.
+            if (
+                cause.is_clicked_driven
+                and prop in ctx.clicked_anim_props
+                and anim_obj.anim.state() == QAbstractAnimation.State.Running
+            ):
+                gen = ctx.clicked_anim_gen
+                wid = id(widget)
+                old_cb = ctx.clicked_anim_callbacks.pop(prop, None)
+                if old_cb is not None:
+                    try:
+                        anim_obj.anim.finished.disconnect(old_cb)
+                    except RuntimeError, TypeError:
+                        pass
+
+                def _on_clicked_anim_done(
+                    _w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen
+                ) -> None:
+                    c = self._contexts.get(_wid)
+                    if c and _gen == c.clicked_anim_gen and _p in c.clicked_anim_props:
+                        c.clicked_anim_props.discard(_p)
+                        if not c.clicked_anim_props:
+                            self._deactivate_clicked(_w, _wid, _gen)
+
+                ctx.clicked_anim_callbacks[prop] = _on_clicked_anim_done
+                anim_obj.anim.finished.connect(_on_clicked_anim_done)
         return False
 
     def _resolve_target_raw(
@@ -755,6 +840,16 @@ class TransitionEngine(QObject):
                 except RuntimeError:
                     pass
             ctx.pending_delays.clear()
+            for prop, cb in list(ctx.clicked_anim_callbacks.items()):
+                anim_obj = ctx.active_animations.get(prop)
+                if anim_obj is not None:
+                    try:
+                        anim_obj.anim.finished.disconnect(cb)
+                    except RuntimeError, TypeError:
+                        pass
+            ctx.clicked_anim_callbacks.clear()
+            ctx.clicked_anim_props.clear()
+            ctx.active_pseudos.discard(":clicked")
             for anim_obj in ctx.active_animations.values():
                 try:
                     anim_obj.anim.stop()
