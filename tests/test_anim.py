@@ -839,6 +839,59 @@ def test_class_change_unrelated_property_ignored(app: QApplication) -> None:
     destroy(widget)
 
 
+def test_class_change_skips_unrelated_widget(app: QApplication) -> None:
+    """
+    Regression: class change on a widget that matches no animated rule must not
+    create an engine context for it.  Before the fix _on_class_change ran
+    unpolish/polish unconditionally on every widget in the app.
+    """
+    engine = make_engine("""
+        .animated { background-color: red; transition: background-color 300ms; }
+    """)
+    app.installEventFilter(engine)
+
+    unrelated = QWidget()
+    engine._on_class_change(unrelated)  # no class → no match
+
+    assert engine._contexts.get(id(unrelated)) is None, (
+        "engine must not create a context for a widget that matches no animated rule"
+    )
+
+    unrelated.setProperty("class", "unrelated")
+    engine._on_class_change(unrelated)  # wrong class → still no match
+
+    assert engine._contexts.get(id(unrelated)) is None
+
+    app.removeEventFilter(engine)
+    destroy(unrelated)
+
+
+def test_class_change_does_not_call_setStyleSheet_on_unmatched_widget(app: QApplication) -> None:
+    """
+    Regression: class change on an unmatched widget must not trigger setStyleSheet,
+    which could discard a widget-level setStyle() override (e.g. QFusionStyle).
+    """
+    engine = make_engine("""
+        .animated { background-color: red; transition: background-color 300ms; }
+    """)
+    app.installEventFilter(engine)
+
+    unrelated = TrackedWidget()
+    unrelated.setProperty("class", "not-animated")
+    app.processEvents()
+
+    before = unrelated.setStyleSheet_count
+    engine._on_class_change(unrelated)
+    app.processEvents()
+
+    assert unrelated.setStyleSheet_count == before, (
+        "engine must not call setStyleSheet on a widget it does not manage"
+    )
+
+    app.removeEventFilter(engine)
+    destroy(unrelated)
+
+
 # ---------------------------------------------------------------------------
 # parse_color — unit tests (no QApplication needed)
 # ---------------------------------------------------------------------------
