@@ -153,11 +153,16 @@ class TransitionEngine(QObject):
 
     def _on_class_change(self, widget: QWidget) -> None:
         """Handle class property change — snapshot size, unpolish/polish, and kick off animations."""
+        # Invalidate rule cache first so _should_evaluate sees the fresh class set.
+        self._rule_cache.clear()
+        # Skip widgets that no animated rule could touch. Without this guard, unpolish/polish
+        # below runs on every widget in the app that ever gets a class property change, which
+        # can interact badly with widget-level setStyle() in the presence of an app stylesheet.
+        if not self._should_evaluate(widget):
+            return
         ctx = self._ctx(widget)
         # Snapshot actual size before Qt's polish snaps it to the new stylesheet values.
         ctx.pre_polish_size = (widget.width(), widget.height())
-        # Invalidate rule cache — class changed.
-        self._rule_cache.clear()
         # Guard the synchronous Polish so it doesn't snap animated props before we animate them.
         ctx.internal_write_depth += 1
         ctx.internal_write_reason = InternalWriteReason.CLASS_CHANGE
