@@ -158,6 +158,9 @@ class TransitionEngine(QObject):
             return
         # Wire up the toggled signal for checkable widgets (idempotent).
         self._connect_checkable(widget)
+        # Ensure Qt delivers HoverEnter/HoverLeave for widgets matched by :hover rules.
+        # Must happen before the active_animations guard so it fires even during running animations.
+        self._ensure_wa_hover(widget)
         # Deferred Polish events arrive after _get_natural_size's setStyleSheet calls restore the
         # inline style.  At that point animations are already running — snapping them would kill the
         # transition.  Any class-change or pseudo-state re-evaluation that truly matters is driven
@@ -255,6 +258,23 @@ class TransitionEngine(QObject):
             self._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
         except RuntimeError:
             pass
+
+    def _ensure_wa_hover(self, widget: QWidget) -> None:
+        """
+        Set WA_Hover on widget if it matches any rule with a :hover pseudo-class.
+
+        Qt only generates HoverEnter/HoverLeave events when this attribute is set.
+        Native widgets (QPushButton, QLabel, …) typically receive it automatically
+        when a QSS stylesheet is applied, but plain QWidget subclasses and widgets
+        that only inherit the app stylesheet do not.  The engine must set it
+        explicitly so its event-filter can track :hover state reliably.
+        """
+        if widget.testAttribute(Qt.WidgetAttribute.WA_Hover):
+            return  # already set — skip rule-matching cost on every subsequent polish
+        if not self._should_evaluate(widget):
+            return
+        if any(":hover" in rule.pseudo_set for rule in self._matching_rules(widget)):
+            widget.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
 
     def _connect_checkable(self, widget: QWidget) -> None:
         """Connect to toggled signal for checkable buttons and sync initial :checked state."""
