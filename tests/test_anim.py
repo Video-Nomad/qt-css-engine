@@ -884,9 +884,7 @@ def test_class_change_does_not_call_setStyleSheet_on_unmatched_widget(app: QAppl
     engine._on_class_change(unrelated)
     app.processEvents()
 
-    assert unrelated.setStyleSheet_count == before, (
-        "engine must not call setStyleSheet on a widget it does not manage"
-    )
+    assert unrelated.setStyleSheet_count == before, "engine must not call setStyleSheet on a widget it does not manage"
 
     app.removeEventFilter(engine)
     destroy(unrelated)

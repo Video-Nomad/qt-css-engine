@@ -332,6 +332,7 @@
     transition: background-color 500ms ease;
 }
 
+.fallthrough-row .fallthrough-btn:pressed,
 .fallthrough-row .fallthrough-btn:clicked {
     background-color: red;
 }

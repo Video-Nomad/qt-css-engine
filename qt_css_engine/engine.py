@@ -86,6 +86,9 @@ class TransitionEngine(QObject):
         self._has_effect_rules: bool = False
         # True if any rule declares a cursor — Qt QSS ignores cursor, so the engine must apply it.
         self._has_cursor_rules: bool = False
+        # Timestamp of the last non-left mouse press event claimed by a widget with matching rules.
+        # Prevents :pressed from propagating to ancestor widgets on middle/right click.
+        self._claimed_mouse_event_ts: int = -1
         self._build_quick_filters()
 
     def _on_startup_done(self) -> None:
@@ -120,12 +123,19 @@ class TransitionEngine(QObject):
         elif t == QEvent.Type.WindowDeactivate:
             self._on_window_deactivate(watched)
         elif t in PSEUDO_EVENTS:
+            if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
+                if isinstance(event, QMouseEvent) and event.button() != Qt.MouseButton.LeftButton:
+                    ts = event.timestamp()
+                    if ts == self._claimed_mouse_event_ts:
+                        return False
+                    if not self._should_evaluate(watched):
+                        return False
+                    self._claimed_mouse_event_ts = ts
             ctx = self._ctx(watched)
             updated = self._update_pseudos(ctx.active_pseudos, t)
             cause = EvaluationCause.PSEUDO_STATE
             if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
-                if isinstance(event, QMouseEvent) and event.button() == Qt.MouseButton.LeftButton:
-                    cause = self._prepare_clicked(watched, ctx, updated)
+                cause = self._prepare_clicked(watched, ctx, updated)
             if updated != ctx.active_pseudos:
                 ctx.active_pseudos = updated
                 self._evaluate_widget_state(watched, cause=cause)
