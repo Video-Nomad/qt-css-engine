@@ -1,3 +1,4 @@
+import os
 import re
 from typing import TYPE_CHECKING
 
@@ -86,6 +87,9 @@ class TransitionEngine(QObject):
         self._has_effect_rules: bool = False
         # True if any rule declares a cursor — Qt QSS ignores cursor, so the engine must apply it.
         self._has_cursor_rules: bool = False
+        # When True, middle/right clicks are ignored entirely (no :pressed/:clicked animations).
+        # Controlled by CSS_ENGINE_LEFT_CLICK_ONLY env var.
+        self._left_click_only: bool = os.environ.get("CSS_ENGINE_LEFT_CLICK_ONLY", "").lower() in ("1", "true", "yes")
         # Timestamp of the last non-left mouse press event claimed by a widget with matching rules.
         # Prevents :pressed from propagating to ancestor widgets on middle/right click.
         self._claimed_mouse_event_ts: int = -1
@@ -125,6 +129,8 @@ class TransitionEngine(QObject):
         elif t in PSEUDO_EVENTS:
             if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
                 if isinstance(event, QMouseEvent) and event.button() != Qt.MouseButton.LeftButton:
+                    if self._left_click_only:
+                        return False
                     ts = event.timestamp()
                     if ts == self._claimed_mouse_event_ts:
                         return False
