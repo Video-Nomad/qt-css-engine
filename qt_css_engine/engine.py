@@ -126,6 +126,9 @@ class TransitionEngine(QObject):
                 self._on_class_change(watched)
         elif t == QEvent.Type.WindowDeactivate:
             self._on_window_deactivate(watched)
+        elif t == QEvent.Type.Leave and watched.isWindow():
+            # Force-clear :hover/:pressed if focus is shifted to a popup window.
+            self._on_window_deactivate(watched)
         elif t in PSEUDO_EVENTS:
             if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
                 if isinstance(event, QMouseEvent) and event.button() != Qt.MouseButton.LeftButton:
