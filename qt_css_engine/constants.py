@@ -8,7 +8,7 @@ from .qt_compat.QtCore import QEasingCurve, QEvent, Qt
 # ---------------------------------------------------------------------------
 
 # Canonical property name for aliased shorthand forms.
-PROP_ALIASES: dict[str, str] = {"background": "background-color"}
+PROP_ALIASES: dict[str, str] = {"background": "background-color", "text-shadow": "box-shadow"}
 
 # Shorthand properties that expand to four longhands (top, right, bottom, left order).
 SHORTHAND_SIDES: dict[str, list[str]] = {

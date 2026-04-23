@@ -323,6 +323,26 @@ def test_background_stripped_from_pseudo_block_via_alias() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Property alias: text-shadow → box-shadow
+# ---------------------------------------------------------------------------
+
+
+def test_text_shadow_prop_normalized_to_box_shadow() -> None:
+    css = ".btn { text-shadow: 2px 2px 4px black; }"
+    _, rules = extract_rules(css)
+    rule = get_rule(rules, ".btn")
+    assert "box-shadow" in rule.properties
+    assert "text-shadow" not in rule.properties
+
+
+def test_text_shadow_transition_normalized_to_box_shadow() -> None:
+    css = ".btn { transition: text-shadow 300ms ease; }"
+    _, rules = extract_rules(css)
+    rule = get_rule(rules, ".btn")
+    assert rule.transitions[0].prop == "box-shadow"
+
+
+# ---------------------------------------------------------------------------
 # Shorthand property expansion
 # ---------------------------------------------------------------------------
 
