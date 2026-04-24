@@ -20,13 +20,13 @@ jobs:
     name: Ruff & Pyright Check
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v8.1.0
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
