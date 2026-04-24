@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from typing import TYPE_CHECKING
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
     from qt_css_engine.css_parser import StyleRule, TransitionSpec
 
 
+event_logger = logging.getLogger("qt_css_engine.event")
+
 _CUBIC_BEZIER_RE = re.compile(
     r"cubic-bezier\(\s*([+-]?\d*\.?\d+)\s*,\s*([+-]?\d*\.?\d+)\s*,\s*([+-]?\d*\.?\d+)\s*,\s*([+-]?\d*\.?\d+)\s*\)",
     re.IGNORECASE,
@@ -48,7 +51,15 @@ class TransitionEngine(QObject):
     and drives smooth property animations via Qt's animation framework.
     """
 
-    pseudo_priority: dict[str, int] = {"": 0, ":hover": 1, ":focus": 1, ":pressed": 2, ":checked": 1, ":clicked": 3, ":active": 1}
+    pseudo_priority: dict[str, int] = {
+        "": 0,
+        ":hover": 1,
+        ":focus": 1,
+        ":pressed": 2,
+        ":checked": 1,
+        ":clicked": 3,
+        ":active": 1,
+    }
 
     # Which effect wins the widget's single graphics-effect slot when both opacity and
     # box-shadow are declared on the same widget. The loser becomes a silent no-op.
@@ -89,6 +100,9 @@ class TransitionEngine(QObject):
         self._has_effect_rules: bool = False
         # True if any rule declares a cursor — Qt QSS ignores cursor, so the engine must apply it.
         self._has_cursor_rules: bool = False
+        # Enable event logging if the CSS_ENGINE_EVENT_LOGGING env var is set.
+        if os.environ.get("CSS_ENGINE_EVENT_LOGGING", "").lower() not in ("1", "true", "yes"):
+            event_logger.disabled = True
         # When True, middle/right clicks are ignored entirely (no :pressed/:clicked animations).
         # Controlled by CSS_ENGINE_LEFT_CLICK_ONLY env var.
         self._left_click_only: bool = os.environ.get("CSS_ENGINE_LEFT_CLICK_ONLY", "").lower() in ("1", "true", "yes")
@@ -187,6 +201,7 @@ class TransitionEngine(QObject):
         # can interact badly with widget-level setStyle() in the presence of an app stylesheet.
         if not self._should_evaluate(widget):
             return
+        event_logger.debug("On class change: %s", widget)
         ctx = self._ctx(widget)
         # Snapshot actual size before Qt's polish snaps it to the new stylesheet values.
         ctx.pre_polish_size = (widget.width(), widget.height())
@@ -219,6 +234,7 @@ class TransitionEngine(QObject):
                 continue
             ctx = self._ctx(child)
             if ":active" not in ctx.active_pseudos:
+                event_logger.debug("On window activate: %s", widget)
                 ctx.active_pseudos.add(":active")
                 self._evaluate_widget_state(child, cause=EvaluationCause.PSEUDO_STATE)
 
@@ -234,6 +250,7 @@ class TransitionEngine(QObject):
                 continue
             stuck = ctx.active_pseudos & _TRANSIENT_PSEUDOS
             if stuck:
+                event_logger.debug("Clearing stuck pseudos: %s", child)
                 ctx.active_pseudos -= stuck
                 self._evaluate_widget_state(child, cause=EvaluationCause.WINDOW_DEACTIVATE)
 
@@ -553,6 +570,7 @@ class TransitionEngine(QObject):
         if self._cleanup_orphans(widget, ctx, all_animated_props, base_props):
             needs_style_update = True
         if needs_style_update:
+            event_logger.debug("Updating style: %s", widget)
             widget.setStyleSheet(scoped_anim_style(widget, ctx.css_anim_props))
         self._apply_cursor(widget, ctx, target_props)
 
@@ -685,13 +703,12 @@ class TransitionEngine(QObject):
                 if anim_obj:
                     self._register_animation(widget, ctx, prop, anim_obj)
             else:
-                assert anim_obj is not None  # is_running=False but anim_obj exists → stopped
                 # Stopped animation — update spec before re-targeting.
                 anim_obj.update_spec(trans.duration_ms, curve)
         else:
-            assert anim_obj is not None  # is_running=True implies anim_obj is not None
-            # Running: re-target mid-flight without delay.
-            anim_obj.update_spec(trans.duration_ms, curve)
+            if anim_obj is not None:  # is_running=True implies anim_obj is not None
+                # Running: re-target mid-flight without delay.
+                anim_obj.update_spec(trans.duration_ms, curve)
 
         if anim_obj:
             if is_natural_target and isinstance(anim_obj, GenericPropertyAnimation):

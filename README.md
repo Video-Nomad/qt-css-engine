@@ -176,3 +176,4 @@ Numeric values accepted everywhere a length is listed: `<n>px`, `<n>pt`, `<n>em`
 | Variable | Description | Default |
 | --- | --- | --- |
 | `CSS_ENGINE_LEFT_CLICK_ONLY` | Exclude middle and right click from triggering on-click animations | `False` |
+| `CSS_ENGINE_EVENT_LOGGING` | Enable internal event debug logging (`qt_css_engine.event` logger) | `False` |
