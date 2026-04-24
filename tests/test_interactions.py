@@ -100,3 +100,88 @@ def test_left_click_only_ignores_right_click(qtbot: QtBot):
 
     ctx = engine._contexts.get(id(widget))
     assert ctx is None or ":pressed" not in ctx.active_pseudos
+
+
+# ---------------------------------------------------------------------------
+# :active pseudo-state tests
+# ---------------------------------------------------------------------------
+
+_ACTIVE_CSS = """
+.target { background-color: red; transition: background-color 200ms; }
+.target:active { background-color: blue; }
+"""
+
+
+def test_window_activate_sets_active_pseudo(qtbot: QtBot):
+    """WindowActivate event adds :active to matching child widgets."""
+    engine = make_engine(_ACTIVE_CSS)
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    child = QWidget(parent)
+    child.setProperty("class", "target")
+
+    engine.eventFilter(parent, QEvent(QEvent.Type.WindowActivate))
+
+    assert ":active" in engine._ctx(child).active_pseudos
+
+
+def test_window_deactivate_clears_active_pseudo(qtbot: QtBot):
+    """WindowDeactivate clears :active from child widgets."""
+    engine = make_engine(_ACTIVE_CSS)
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    child = QWidget(parent)
+    child.setProperty("class", "target")
+    engine._ctx(child).active_pseudos.add(":active")
+
+    engine.eventFilter(parent, QEvent(QEvent.Type.WindowDeactivate))
+
+    ctx = engine._contexts.get(id(child))
+    assert ctx is None or ":active" not in ctx.active_pseudos
+
+
+def test_leave_window_preserves_active_pseudo(qtbot: QtBot):
+    """Mouse leaving the window must NOT clear :active — window is still focused."""
+    engine = make_engine(_ACTIVE_CSS)
+
+    parent = QWidget()  # top-level: isWindow() == True
+    qtbot.addWidget(parent)
+    child = QWidget(parent)
+    child.setProperty("class", "target")
+    engine._ctx(child).active_pseudos.add(":active")
+
+    engine.eventFilter(parent, QEvent(QEvent.Type.Leave))
+
+    assert ":active" in engine._ctx(child).active_pseudos
+
+
+def test_window_activate_ignores_non_matching_widgets(qtbot: QtBot):
+    """WindowActivate must not set :active on widgets without an :active rule."""
+    engine = make_engine(_ACTIVE_CSS)
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    child = QWidget(parent)
+    child.setProperty("class", "other")
+
+    engine.eventFilter(parent, QEvent(QEvent.Type.WindowActivate))
+
+    ctx = engine._contexts.get(id(child))
+    assert ctx is None or ":active" not in ctx.active_pseudos
+
+
+def test_active_pseudo_triggers_transition(qtbot: QtBot):
+    """:active triggers a background-color animation like any other pseudo-state."""
+    engine = make_engine(_ACTIVE_CSS)
+
+    widget = QWidget()
+    qtbot.addWidget(widget)
+    widget.setProperty("class", "target")
+    engine._evaluate_widget_state(widget)
+
+    engine._ctx(widget).active_pseudos.add(":active")
+    engine._evaluate_widget_state(widget)
+
+    assert "background-color" in engine._ctx(widget).active_animations

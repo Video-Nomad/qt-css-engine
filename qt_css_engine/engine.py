@@ -48,7 +48,7 @@ class TransitionEngine(QObject):
     and drives smooth property animations via Qt's animation framework.
     """
 
-    pseudo_priority: dict[str, int] = {"": 0, ":hover": 1, ":focus": 1, ":pressed": 2, ":checked": 1, ":clicked": 3}
+    pseudo_priority: dict[str, int] = {"": 0, ":hover": 1, ":focus": 1, ":pressed": 2, ":checked": 1, ":clicked": 3, ":active": 1}
 
     # Which effect wins the widget's single graphics-effect slot when both opacity and
     # box-shadow are declared on the same widget. The loser becomes a silent no-op.
@@ -124,11 +124,13 @@ class TransitionEngine(QObject):
             prop_name = getattr(event, "propertyName", lambda: None)()
             if prop_name is not None and getattr(prop_name, "data", lambda: b"")() == b"class":
                 self._on_class_change(watched)
+        elif t == QEvent.Type.WindowActivate:
+            self._on_window_activate(watched)
         elif t == QEvent.Type.WindowDeactivate:
             self._on_window_deactivate(watched)
         elif t == QEvent.Type.Leave and watched.isWindow():
             # Force-clear :hover/:pressed if focus is shifted to a popup window.
-            self._on_window_deactivate(watched)
+            self._on_window_deactivate(watched, clear_active=False)
         elif t in PSEUDO_EVENTS:
             if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
                 if isinstance(event, QMouseEvent) and event.button() != Qt.MouseButton.LeftButton:
@@ -164,6 +166,7 @@ class TransitionEngine(QObject):
         # Ensure Qt delivers HoverEnter/HoverLeave for widgets matched by :hover rules.
         # Must happen before the active_animations guard so it fires even during running animations.
         self._ensure_wa_hover(widget)
+        self._seed_active_pseudo(widget)
         # Deferred Polish events arrive after _get_natural_size's setStyleSheet calls restore the
         # inline style.  At that point animations are already running — snapping them would kill the
         # transition.  Any class-change or pseudo-state re-evaluation that truly matters is driven
@@ -204,11 +207,22 @@ class TransitionEngine(QObject):
         self._evaluate_widget_state(widget, cause=EvaluationCause.CLASS_CHANGE)
         ctx.pre_polish_size = None
 
-    def _on_window_deactivate(self, widget: QWidget) -> None:
-        """Clear stuck :hover/:pressed states when the window loses focus."""
+    def _on_window_activate(self, widget: QWidget) -> None:
+        """Set :active on children that have :active rules when the window gains focus."""
+        for child in widget.findChildren(QWidget):
+            if not any(":active" in r.pseudo_set for r in self._matching_rules(child)):
+                continue
+            ctx = self._ctx(child)
+            if ":active" not in ctx.active_pseudos:
+                ctx.active_pseudos.add(":active")
+                self._evaluate_widget_state(child, cause=EvaluationCause.PSEUDO_STATE)
+
+    def _on_window_deactivate(self, widget: QWidget, *, clear_active: bool = True) -> None:
+        """Clear stuck :hover/:pressed/:active states when the window loses focus."""
         # Qt may not deliver HoverLeave when a child dialog steals focus.
         # Clear stuck :hover/:pressed so widgets don't remain frozen in the highlighted state.
-        _TRANSIENT_PSEUDOS = {":hover", ":pressed"}
+        # clear_active=False when called from the Leave path: window is still focused, only cursor left.
+        _TRANSIENT_PSEUDOS = {":hover", ":pressed", ":active"} if clear_active else {":hover", ":pressed"}
         for child in widget.findChildren(QWidget):
             ctx = self._contexts.get(id(child))
             if ctx is None:
@@ -278,6 +292,15 @@ class TransitionEngine(QObject):
             return
         if any(":hover" in rule.pseudo_set for rule in self._matching_rules(widget)):
             widget.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+    def _seed_active_pseudo(self, widget: QWidget) -> None:
+        """Add :active to the widget's pseudo set at Polish time if its window is currently active."""
+        if not widget.isActiveWindow():
+            return
+        if not self._should_evaluate(widget):
+            return
+        if any(":active" in r.pseudo_set for r in self._matching_rules(widget)):
+            self._ctx(widget).active_pseudos.add(":active")
 
     def _connect_checkable(self, widget: QWidget) -> None:
         """Connect to toggled signal for checkable buttons and sync initial :checked state."""

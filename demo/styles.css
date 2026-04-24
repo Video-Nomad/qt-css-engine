@@ -309,6 +309,28 @@
     color: white;
 }
 
+/* :active demo — transitions when window gains/loses focus */
+.active-demo {
+    background-color: #2a2a2a;
+    color: #555555;
+    border: 2px solid #3a3a3a;
+    border-radius: 4px;
+    padding: 12px 24px;
+    transition: all 400ms ease;
+}
+
+.active-demo:active {
+    background-color: #1a4a2a;
+    color: #66dd88;
+    border-color: #33aa55;
+}
+
+.active-demo:hover {
+    background-color: #1a4a2a;
+    color: #66dd88;
+    border-color: #33aa55;
+}
+
 /* event fallthrough test */
 .fallthrough-row {
     background-color: #1a3a6b;

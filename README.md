@@ -129,6 +129,17 @@ transition: background 400ms 100ms ease;
 transition: background 400ms -100ms ease;
 ```
 
+## Supported pseudo-classes
+
+| Pseudo-class | Description | Transition | Static |
+| --- | --- | --- | --- |
+| `:hover` | Hover in-out | ✅ | ✅ |
+| `:focus` | Focus in-out | ✅ | ✅ |
+| `:pressed` | Hold-down mouse button | ✅ | ✅ |
+| `:checked` | Checked state on-off | ✅ | ✅ |
+| `:active` | Window gains/loses focus | ✅ | ✅ |
+| `:clicked` | (NEW) Play full animation loop on click | ✅ | ❌ |
+
 ## Supported properties
 
 Color values accepted everywhere a color is listed: named (`red`, `steelblue`, …), `#rrggbb`, `#rrggbbaa`, `rgb()`, `rgba()`, `hsl()`, `hsla()`.

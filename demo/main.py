@@ -358,6 +358,37 @@ def main():
     clicked_btn.setProperty("class", "clicked-btn")
     layout.addWidget(clicked_btn)
 
+    # :active demo — widget transitions when window gains/loses focus
+    active_row = QFrame()
+    active_row_layout = QHBoxLayout(active_row)
+    active_row_layout.setContentsMargins(0, 0, 0, 0)
+    active_row_layout.setSpacing(8)
+
+    active_lbl = QLabel(":active — lights up when window is focused")
+    active_lbl.setProperty("class", "active-demo")
+    active_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    active_row_layout.addWidget(active_lbl, stretch=1)
+
+    popup_btn = QPushButton("Open Popup")
+    popup_btn.setProperty("class", "btn")
+    active_row_layout.addWidget(popup_btn)
+
+    layout.addWidget(active_row)
+
+    _popups: list[QWidget] = []
+
+    def _open_popup() -> None:
+        popup = QWidget(window, Qt.WindowType.Dialog)
+        popup.setWindowTitle("Popup — click main window to restore :active")
+        popup.resize(320, 80)
+        popup_inner = QVBoxLayout(popup)
+        popup_inner.addWidget(QLabel("Click the main window to trigger :active transition."))
+        _popups.append(popup)
+        popup.destroyed.connect(lambda: _popups.remove(popup) if popup in _popups else None)
+        popup.show()
+
+    popup_btn.clicked.connect(_open_popup)
+
     # steps() easing demo — hover each button to see discrete color jumps
     steps_row = QFrame()
     steps_row.setProperty("class", "steps-row")
