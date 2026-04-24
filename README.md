@@ -171,3 +171,8 @@ Numeric values accepted everywhere a length is listed: `<n>px`, `<n>pt`, `<n>em`
 | `box-shadow` | Drop shadow — not native QSS, applied via `QGraphicsDropShadowEffect`. No `inset`, `spread` is ignored. First shadow wins when multiple are declared. | `<x> <y> [blur] [spread] <color>` | ✅ | ✅ |
 | `cursor` | Mouse cursor — Qt QSS ignores `cursor`, applied via `setCursor()` | `default`, `pointer`, `text`, `crosshair`, `wait`, `progress`, `help`, `move`, `grab`, `grabbing`, `copy`, `alias`, `not-allowed`, `no-drop`, `cell`, `all-scroll`, `n-resize`, `s-resize`, `e-resize`, `w-resize`, `ne-resize`, `nw-resize`, `se-resize`, `sw-resize`, `ns-resize`, `ew-resize`, `nesw-resize`, `nwse-resize`, `row-resize`, `col-resize`, `none` | ❌ | ✅ |
 
+## Environment variables
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `CSS_ENGINE_LEFT_CLICK_ONLY` | Exclude middle and right click from triggering on-click animations | `False` |
