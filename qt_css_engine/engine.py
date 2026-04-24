@@ -109,6 +109,13 @@ class TransitionEngine(QObject):
         # Timestamp of the last non-left mouse press event claimed by a widget with matching rules.
         # Prevents :pressed from propagating to ancestor widgets on middle/right click.
         self._claimed_mouse_event_ts: int = -1
+        # Secondary cache keyed on (type_name, class_str): stores rules whose last segment
+        # matches that combo. Shared across all widgets with the same type+class, so a burst
+        # of N widgets with K unique combos pays the full scan only K times.
+        self._type_class_rule_cache: dict[tuple[str, str], list[StyleRule]] = {}
+        # Deferred Polish burst state: widgets queued for evaluation after the burst drains.
+        self._polish_pending: bool = False
+        self._polish_queue: list[QWidget] = []
         self._build_quick_filters()
 
     def _on_startup_done(self) -> None:
@@ -173,28 +180,42 @@ class TransitionEngine(QObject):
     def _on_polish(self, widget: QWidget) -> None:
         """Handle Polish events — evaluate initial widget state on first polish."""
         ctx = self._contexts.get(id(widget))
-        # Ignore Polish events triggered by our own internal style writes (e.g. during class change unpolish/polish,
-        # or natural size calculation).
+        # Ignore Polish events triggered by our own internal style writes.
         if ctx is not None and ctx.internal_write_depth > 0:
             return
         # Wire up the toggled signal for checkable widgets (idempotent).
         self._connect_checkable(widget)
-        # Ensure Qt delivers HoverEnter/HoverLeave for widgets matched by :hover rules.
-        # Must happen before the active_animations guard so it fires even during running animations.
-        self._ensure_wa_hover(widget)
-        self._seed_active_pseudo(widget)
-        # Deferred Polish events arrive after _get_natural_size's setStyleSheet calls restore the
-        # inline style.  At that point animations are already running — snapping them would kill the
-        # transition.  Any class-change or pseudo-state re-evaluation that truly matters is driven
-        # by _on_class_change / _evaluate_widget_state directly; Polish is only needed for initial
-        # widget setup (active_animations is empty then).
+        # Skip widgets that no animated/effect rule could ever touch.
+        if not self._should_evaluate(widget):
+            return
         if ctx is not None and ctx.active_animations:
             return
-        self._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+        # Defer all expensive work to after the burst. Qt fires Polish for every child widget synchronously
+        if not self._polish_pending:
+            self._polish_pending = True
+            self._polish_queue.clear()
+            QTimer.singleShot(0, self._flush_polish_queue)
+        self._polish_queue.append(widget)
+
+    def _flush_polish_queue(self) -> None:
+        """Drain the deferred Polish evaluation queue after a burst completes."""
+        self._polish_pending = False
+        widgets, self._polish_queue = self._polish_queue, []
+        for w in widgets:
+            try:
+                self._ensure_wa_hover(w)
+                self._seed_active_pseudo(w)
+                ctx = self._contexts.get(id(w))
+                if ctx is None or not ctx.active_animations:
+                    self._evaluate_widget_state(w, cause=EvaluationCause.POLISH)
+            except RuntimeError:
+                pass
 
     def _on_class_change(self, widget: QWidget) -> None:
         """Handle class property change — snapshot size, unpolish/polish, and kick off animations."""
-        # Invalidate rule cache first so _should_evaluate sees the fresh class set.
+        # Invalidate per-widget rule cache (ancestor chain may have changed for any widget).
+        # _type_class_rule_cache is keyed on (type, class_str) of the widget only — no ancestor
+        # info — so it remains valid across class changes and must not be cleared here.
         self._rule_cache.clear()
         # Skip widgets that no animated rule could touch. Without this guard, unpolish/polish
         # below runs on every widget in the app that ever gets a class property change, which
@@ -469,16 +490,37 @@ class TransitionEngine(QObject):
         """
         Return rules matching widget, using per-widget cached results when possible.
 
-        Keyed by id(widget) rather than a type/class signature so that widgets with the
-        same CSS class but different ancestors each get their own correct cache entry.
+        Two-level cache:
+        1. _type_class_rule_cache[(type_name, class_str)]: rules whose *last* segment matches
+           this type+class combo — computed once per unique combo across all widgets.
+        2. _rule_cache[id(widget)]: final result after ancestor-chain filtering, per widget.
         """
         wid = id(widget)
         cached = self._rule_cache.get(wid)
         if cached is not None:
             return cached
-        result = [rule for rule in self.rules if self._matches(widget, rule)]
+        # Get or build the candidate list (last-segment match only) for this type+class.
+        type_name = type(widget).__name__
+        class_str = widget.property("class") or ""
+        key = (type_name, class_str)
+        candidates = self._type_class_rule_cache.get(key)
+        if candidates is None:
+            candidates = [r for r in self.rules if r.segments and self._widget_matches_segment(widget, r.segments[-1])]
+            self._type_class_rule_cache[key] = candidates
+        # Filter candidates by ancestor chain (cheap: small list, only multi-segment rules need traversal).
+        result = [r for r in candidates if len(r.segments) == 1 or self._check_ancestors(widget, r)]
         self._rule_cache[wid] = result
         return result
+
+    def _check_ancestors(self, widget: QWidget, rule: StyleRule) -> bool:
+        """Check the ancestor chain for a rule whose last segment already matched."""
+        seg_idx = len(rule.segments) - 2
+        ancestor: QObject | None = widget.parent()
+        while ancestor and seg_idx >= 0:
+            if isinstance(ancestor, QWidget) and self._widget_matches_segment(ancestor, rule.segments[seg_idx]):
+                seg_idx -= 1
+            ancestor = ancestor.parent()
+        return seg_idx < 0
 
     # -------------------------------------------------------------------------
     # Widget lifecycle tracking
@@ -548,15 +590,13 @@ class TransitionEngine(QObject):
         # Qt's app stylesheet already has all base-state values (animated props are only
         # stripped from pseudo-state blocks in the cleaned QSS, not from the base block).
         # Effect props (opacity, box-shadow) need their QGraphicsEffect initialised even at
-        # base state, so skip only when there are no effect rules at all.
-        if (
-            cause.snaps_transitions
-            and not ctx.css_anim_props
-            and not ctx.active_animations
-            and not self._has_effect_rules
-            and not self._has_cursor_rules
-        ):
-            return
+        # base state — but only when this specific widget actually matches an effect rule.
+        if cause.snaps_transitions and not ctx.css_anim_props and not ctx.active_animations:
+            matching = self._matching_rules(widget)
+            if not any(p in EFFECT_PROPS for r in matching for p in r.properties) and not any(
+                "cursor" in r.properties for r in matching
+            ):
+                return
         (
             base_props,
             target_props,
@@ -673,6 +713,12 @@ class TransitionEngine(QObject):
 
         # No transition declared → snap.
         if prop not in target_transitions:
+            # If no animation was running and no prior inline value, and the target equals the
+            # base value Qt's QSS already renders, the engine has nothing to override.  Skip
+            # writing to css_anim_props so unrelated Polish events (e.g. dynamic property
+            # changes) don't trigger spurious setStyleSheet calls.
+            if not anim_obj and prop not in ctx.css_anim_props and target_raw == base_props.get(prop):
+                return False
             return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target)
 
         trans = target_transitions[prop]
@@ -958,6 +1004,7 @@ class TransitionEngine(QObject):
         self.rules = rules
         self._build_quick_filters()
         self._rule_cache.clear()
+        self._type_class_rule_cache.clear()
 
         animated_widget_ids: set[int] = set()
         for widget in animated_widgets:

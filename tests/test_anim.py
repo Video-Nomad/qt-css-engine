@@ -252,8 +252,9 @@ def test_snap_multiple_props_calls_setStyleSheet_once(app: QApplication) -> None
     widget = TrackedWidget()
     widget.setProperty("class", "btn")
 
-    # Hover with no hover-transition → all 3 props snap
-    engine._ctx(widget).active_pseudos = {":hover"}
+    # Disable animations so all 3 pressed props snap instead of animate → one batched setStyleSheet
+    engine.animations_enabled = False
+    engine._ctx(widget).active_pseudos = {":pressed"}
     engine._evaluate_widget_state(widget)
 
     assert widget.setStyleSheet_count == 1
@@ -272,7 +273,9 @@ def test_snap_applies_all_values_in_one_call(app: QApplication) -> None:
     widget = TrackedWidget()
     widget.setProperty("class", "btn")
 
-    engine._ctx(widget).active_pseudos = {":hover"}
+    # Disable animations so both pressed props snap → inline style must contain both
+    engine.animations_enabled = False
+    engine._ctx(widget).active_pseudos = {":pressed"}
     engine._evaluate_widget_state(widget)
 
     final_style = widget.styleSheet()
