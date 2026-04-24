@@ -73,6 +73,8 @@ class TransitionEngine(QObject):
             QTimer.singleShot(startup_delay_ms, lambda: self._on_startup_done())
         # One source of truth for all per-widget state.
         self._contexts: dict[int, WidgetContext] = {}
+        # Widgets that have at least one :active rule — populated at Polish time for O(1) activate/deactivate.
+        self._active_rule_widgets: dict[int, QWidget] = {}
         # Widget IDs with a destroyed-signal connection (prevents double-connect).
         self._connected_widgets: set[int] = set()
         # Checkable widget IDs already connected to toggled signal.
@@ -209,8 +211,11 @@ class TransitionEngine(QObject):
 
     def _on_window_activate(self, widget: QWidget) -> None:
         """Set :active on children that have :active rules when the window gains focus."""
-        for child in widget.findChildren(QWidget):
-            if not any(":active" in r.pseudo_set for r in self._matching_rules(child)):
+        for child in self._active_rule_widgets.values():
+            try:
+                if child.window() is not widget:
+                    continue
+            except RuntimeError:
                 continue
             ctx = self._ctx(child)
             if ":active" not in ctx.active_pseudos:
@@ -295,12 +300,14 @@ class TransitionEngine(QObject):
 
     def _seed_active_pseudo(self, widget: QWidget) -> None:
         """Add :active to the widget's pseudo set at Polish time if its window is currently active."""
+        if not any(":active" in r.pseudo_set for r in self._matching_rules(widget)):
+            return
+        self._active_rule_widgets[id(widget)] = widget
         if not widget.isActiveWindow():
             return
         if not self._should_evaluate(widget):
             return
-        if any(":active" in r.pseudo_set for r in self._matching_rules(widget)):
-            self._ctx(widget).active_pseudos.add(":active")
+        self._ctx(widget).active_pseudos.add(":active")
 
     def _connect_checkable(self, widget: QWidget) -> None:
         """Connect to toggled signal for checkable buttons and sync initial :checked state."""
@@ -473,6 +480,7 @@ class TransitionEngine(QObject):
         self._connected_widgets.discard(wid)
         self._connected_checkable_ids.discard(wid)
         self._rule_cache.pop(wid, None)
+        self._active_rule_widgets.pop(wid, None)
         ctx = self._contexts.pop(wid, None)
         if ctx is None:
             return

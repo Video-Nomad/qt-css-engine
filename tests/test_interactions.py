@@ -120,6 +120,7 @@ def test_window_activate_sets_active_pseudo(qtbot: QtBot):
     qtbot.addWidget(parent)
     child = QWidget(parent)
     child.setProperty("class", "target")
+    engine._seed_active_pseudo(child)  # normally triggered at Polish time
 
     engine.eventFilter(parent, QEvent(QEvent.Type.WindowActivate))
 
