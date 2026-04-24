@@ -69,7 +69,7 @@ typeCheckingMode = "strict"
 reportMissingImports = true
 reportUntypedFunctionDecorator = false
 pythonVersion = "3.14"
-pythonPlatform = "Windows"
+pythonPlatform = "All"
 executionEnvironments = [{ root = "." }]
 
 [tool.ruff]
