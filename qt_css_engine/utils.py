@@ -426,9 +426,25 @@ def content_box_px(widget: QWidget, base_props: dict[str, str], prop: str, pixel
     ``prop`` must contain ``"width"`` or ``"height"`` to select the axis.
     The result may be negative if box-model extras exceed ``pixel_value``; callers clamp as needed.
 
+    For QFrame-derived widgets (QLabel, QFrame, …) Qt reflects the full QSS box-model
+    (border + padding + margin) in widget.contentsRect(); we trust that delta directly.
+    Reading the same values from base_props would double-count, because QLabel's frameWidth()
+    already bakes padding+margin into the frame.
+
+    For non-QFrame widgets (QPushButton, QLineEdit, …) contentsRect() does NOT reflect QSS
+    padding/border, so we compute from the CSS values plus PM_DefaultFrameWidth for the
+    native frame when no border is declared.
+
     Note: Qt's layout operates in integer logical pixels, so this calculation should be exact in practice
     even under fractional OS scaling.
     """
+    if isinstance(widget, QFrame):
+        cr = widget.contentsRect()
+        if "width" in prop:
+            extras = max(0, widget.width() - cr.width())
+        else:
+            extras = max(0, widget.height() - cr.height())
+        return pixel_value - extras
     if "width" in prop:
         b = total_border_px(widget, base_props, "left") + total_border_px(widget, base_props, "right")
         p = padding_side_px(base_props, "left") + padding_side_px(base_props, "right")
