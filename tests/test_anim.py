@@ -213,6 +213,43 @@ def test_no_crash_when_widget_deleted_during_animation(app: QApplication) -> Non
     destroy(widget)  # must not raise
 
 
+def test_tick_after_widget_deleted_no_crash(app: QApplication) -> None:
+    """Tick fired after C++ widget delete (queued tick race) must not raise."""
+    # Color
+    w1 = QWidget()
+    color_anim = ColorAnimation(w1, "background-color", QColor("red"), 1000, QEasingCurve.Type.Linear)
+    color_anim.set_target("blue")
+    qt_delete(w1)
+    color_anim._on_tick(0.5)  # must not raise
+    assert color_anim.anim.state() != QAbstractAnimation.State.Running
+
+    # Numeric
+    w2 = QWidget()
+    num_anim = GenericPropertyAnimation(w2, "min-width", 0, 1000, QEasingCurve.Type.Linear)
+    num_anim.set_target("100px")
+    qt_delete(w2)
+    num_anim._on_tick(50.0)
+    assert num_anim.anim.state() != QAbstractAnimation.State.Running
+
+    # Opacity
+    w3 = QWidget()
+    op_anim = OpacityAnimation(w3, 1.0, 1000, QEasingCurve.Type.Linear)
+    op_anim.anim.setStartValue(1.0)
+    op_anim.anim.setEndValue(0.0)
+    op_anim.anim.start()
+    qt_delete(w3)
+    op_anim._on_tick(0.5)
+    assert op_anim.anim.state() != QAbstractAnimation.State.Running
+
+    # BoxShadow
+    w4 = QWidget()
+    shadow_anim = BoxShadowHandle(w4, "none", 1000, QEasingCurve.Type.Linear)
+    shadow_anim.set_target("2px 2px 4px black")
+    qt_delete(w4)
+    shadow_anim._on_tick(0.5)
+    assert shadow_anim.anim.state() != QAbstractAnimation.State.Running
+
+
 def test_multiple_animated_props_all_cleaned_up(app: QApplication) -> None:
     engine = make_engine("""
         .box { background-color: steelblue; color: white; }
