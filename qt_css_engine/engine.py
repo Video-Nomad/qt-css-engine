@@ -546,8 +546,9 @@ class TransitionEngine(QObject):
         for timer in ctx.pending_delays.values():
             try:
                 timer.stop()
+                timer.timeout.disconnect()
                 timer.deleteLater()
-            except RuntimeError:
+            except RuntimeError, TypeError:
                 pass
         ctx.pending_delays.clear()
         for prop, cb in ctx.class_anim_callbacks.items():
@@ -681,6 +682,10 @@ class TransitionEngine(QObject):
         old_timer = ctx.pending_delays.pop(prop, None)
         if old_timer is not None:
             old_timer.stop()
+            try:
+                old_timer.timeout.disconnect()
+            except RuntimeError, TypeError:
+                pass
             old_timer.deleteLater()
 
         # Class-change animations take priority over pseudo-state changes (hover/focus).
@@ -983,8 +988,9 @@ class TransitionEngine(QObject):
             for timer in ctx.pending_delays.values():
                 try:
                     timer.stop()
+                    timer.timeout.disconnect()
                     timer.deleteLater()
-                except RuntimeError:
+                except RuntimeError, TypeError:
                     pass
             ctx.pending_delays.clear()
             for prop, cb in list(ctx.clicked_anim_callbacks.items()):
