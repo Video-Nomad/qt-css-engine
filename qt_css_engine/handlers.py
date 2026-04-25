@@ -1,5 +1,6 @@
 from qt_css_engine.constants import NON_NEGATIVE_PROPS
 
+from .qt_compat import is_qobject_alive
 from .qt_compat.QtCore import QEasingCurve, QObject, QVariantAnimation
 from .qt_compat.QtGui import QColor
 from .qt_compat.QtWidgets import QWidget
@@ -55,6 +56,9 @@ class BoxShadowHandle(QObject):
 
     def _on_tick(self, t: float) -> None:
         """Interpolate the shadow between _start and _end at progress t and apply it."""
+        if not is_qobject_alive(self.widget):
+            self.anim.stop()
+            return
         # Resolve None as a transparent copy of the other end for fade in/out.
         if self._start is None and self._end is None:
             return
@@ -169,6 +173,9 @@ class ColorAnimation(QObject):
 
     def _on_tick(self, t: float) -> None:
         """Write interpolated color to css_anim_props and refresh the widget stylesheet."""
+        if not is_qobject_alive(self.widget):
+            self.anim.stop()
+            return
         self.current_color = interpolate_oklab(self.start_color, self.end_color, t)
         props = self._props
         props[self.prop] = self.current_color.name(QColor.NameFormat.HexArgb)
@@ -274,6 +281,9 @@ class GenericPropertyAnimation(QObject):
 
     def _on_tick(self, val: int | float) -> None:
         """Write interpolated numeric value to css_anim_props and refresh the widget stylesheet."""
+        if not is_qobject_alive(self.widget):
+            self.anim.stop()
+            return
         self.current_val = float(val)
         written = max(0.0, self.current_val) if self.prop in NON_NEGATIVE_PROPS else self.current_val
         props = self._props
@@ -374,6 +384,9 @@ class OpacityAnimation(QObject):
 
     def _on_tick(self, val: float) -> None:
         """Apply interpolated opacity to the widget's QGraphicsOpacityEffect."""
+        if not is_qobject_alive(self.widget):
+            self.anim.stop()
+            return
         self._current_val = val
         apply_opacity_to_widget(self.widget, val, self.effect_priority)
 
