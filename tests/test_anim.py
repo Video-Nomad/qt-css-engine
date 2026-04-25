@@ -2694,3 +2694,134 @@ def test_clicked_reload_clears_state(app: QApplication) -> None:
     assert not ctx.clicked_anim_props
     assert not ctx.clicked_anim_callbacks
     destroy(widget)
+
+
+# ---------------------------------------------------------------------------
+# Effect props (opacity / box-shadow) initialization and hot-reload
+# ---------------------------------------------------------------------------
+
+
+def test_effect_opacity_installed_on_initial_evaluation(app: QApplication) -> None:
+    """Base-state opacity rule must install QGraphicsOpacityEffect on first evaluation."""
+    engine = make_engine(".box { opacity: 0.5; }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+
+    assert _has_anim(engine, widget, "opacity")
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsOpacityEffect)
+    assert effect.opacity() == pytest.approx(0.5)
+    destroy(widget)
+
+
+def test_effect_box_shadow_installed_on_initial_evaluation(app: QApplication) -> None:
+    """Base-state box-shadow rule must install QGraphicsDropShadowEffect on first evaluation."""
+    engine = make_engine(".box { box-shadow: 0 4px 8px rgba(0,0,0,0.5); }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+
+    assert _has_anim(engine, widget, "box-shadow")
+    assert isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect)
+    destroy(widget)
+
+
+def test_effect_opacity_not_skipped_when_target_equals_base(app: QApplication) -> None:
+    """
+    Regression: a no-transition effect prop where target_raw == base_props value must still
+    create the QGraphicsEffect.  Earlier code skipped via the css_anim_props short-circuit
+    because effect props don't live in css_anim_props.
+    """
+    engine = make_engine(".box { opacity: 0.7; }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.RULE_RELOAD)
+
+    assert _has_anim(engine, widget, "opacity")
+    assert isinstance(widget.graphicsEffect(), QGraphicsOpacityEffect)
+    destroy(widget)
+
+
+def test_reload_reapplies_opacity_effect(app: QApplication, qtbot: QtBot) -> None:
+    """After hot-reload, opacity effect must be reinstalled with new value."""
+    engine = make_engine(".box { opacity: 0.5; }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    app.processEvents()
+
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    assert _has_anim(engine, widget, "opacity")
+    first_effect = widget.graphicsEffect()
+    assert isinstance(first_effect, QGraphicsOpacityEffect)
+    assert first_effect.opacity() == pytest.approx(0.5)
+
+    _, new_rules = extract_rules(".box { opacity: 0.2; }")
+    engine.reload_rules(new_rules)
+    qtbot.wait(20)  # flush deferred _reeval_effect_widgets_deferred + Polish queue
+
+    assert _has_anim(engine, widget, "opacity")
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsOpacityEffect)
+    assert effect.opacity() == pytest.approx(0.2)
+    destroy(widget)
+
+
+def test_reload_reapplies_box_shadow_effect(app: QApplication, qtbot: QtBot) -> None:
+    """After hot-reload, box-shadow effect must be reinstalled with new params."""
+    engine = make_engine(".box { box-shadow: 0 4px 8px rgba(0,0,0,0.5); }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    app.processEvents()
+
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    assert _has_anim(engine, widget, "box-shadow")
+    assert isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect)
+
+    _, new_rules = extract_rules(".box { box-shadow: 0 8px 16px rgba(0,0,0,0.8); }")
+    engine.reload_rules(new_rules)
+    qtbot.wait(20)
+
+    assert _has_anim(engine, widget, "box-shadow")
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsDropShadowEffect)
+    assert effect.blurRadius() == pytest.approx(16.0)
+    destroy(widget)
+
+
+def test_reload_adds_opacity_to_widget_with_no_prior_effect(app: QApplication, qtbot: QtBot) -> None:
+    """Hot-reload that introduces an effect rule for the first time must install the effect."""
+    engine = make_engine(".box { background-color: red; }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    assert widget.graphicsEffect() is None
+
+    _, new_rules = extract_rules(".box { background-color: red; opacity: 0.4; }")
+    engine.reload_rules(new_rules)
+    qtbot.wait(20)
+
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsOpacityEffect)
+    assert effect.opacity() == pytest.approx(0.4)
+    destroy(widget)
+
+
+def test_reload_removes_opacity_when_rule_dropped(app: QApplication, qtbot: QtBot) -> None:
+    """Reload that removes the effect rule must tear down the QGraphicsEffect."""
+    engine = make_engine(".box { opacity: 0.3; }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    assert isinstance(widget.graphicsEffect(), QGraphicsOpacityEffect)
+
+    _, new_rules = extract_rules(".box { background-color: red; }")
+    engine.reload_rules(new_rules)
+    qtbot.wait(20)
+
+    assert not _has_anim(engine, widget, "opacity")
+    assert widget.graphicsEffect() is None
+    destroy(widget)

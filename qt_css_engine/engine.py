@@ -717,7 +717,14 @@ class TransitionEngine(QObject):
             # base value Qt's QSS already renders, the engine has nothing to override.  Skip
             # writing to css_anim_props so unrelated Polish events (e.g. dynamic property
             # changes) don't trigger spurious setStyleSheet calls.
-            if not anim_obj and prop not in ctx.css_anim_props and target_raw == base_props.get(prop):
+            # Effect props (opacity, box-shadow, text-shadow) are *not* rendered by Qt QSS —
+            # they need a QGraphicsEffect installed by _snap_prop_or_effect, so never skip them.
+            if (
+                prop not in EFFECT_PROPS
+                and not anim_obj
+                and prop not in ctx.css_anim_props
+                and target_raw == base_props.get(prop)
+            ):
                 return False
             return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target)
 
