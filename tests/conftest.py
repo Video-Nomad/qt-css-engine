@@ -6,7 +6,7 @@ from qt_css_engine.qt_compat.QtWidgets import QApplication
 
 
 @pytest.fixture(scope="session")
-def app() -> QApplication:
+def _app() -> QApplication:  # type: ignore[reportUnusedFunction]
     instance = QApplication.instance()
     if instance is None:
         instance = QApplication(sys.argv)

@@ -154,11 +154,13 @@
     border-radius: 4px;
     padding: 10px 20px;
     margin-right: 10px;
-    transition: width 0.6s ease;
+    /* box-shadow: 0 0 40 blue; */
+    transition: all 0.6s ease;
 }
 
 .size-hint-container .btn-custom:hover {
-    width: 125px;
+    min-width: 125px;
+    max-width: 125px;
 }
 
 /* Multiple buttons in one container and multiple containers */
@@ -186,7 +188,7 @@
     border-radius: 4px;
     padding: 8px 16px;
     transition: all 300ms cubic-bezier(.53, -0.98, .52, 1.66);
-    transition: background-color 200ms ease;
+    transition: background-color 300ms 200ms ease;
 }
 
 .cycle-btn.active {
@@ -218,9 +220,11 @@
 .dynamic-label {
     background-color: #0000ff;
     color: white;
+    padding: 5px 10px;
+    margin-right: 10px;
     min-height: 40px;
     max-height: 40px;
-    transition: all 1000ms ease-in-out;
+    transition: all 1000ms ease;
 }
 
 .dynamic-label.state1 {
@@ -272,7 +276,89 @@
     background-color: #e85d04;
 }
 
-.steps-btn.s-jump-end   { transition: background-color 1500ms steps(5, jump-end); }
-.steps-btn.s-jump-start { transition: background-color 1500ms steps(5, jump-start); }
-.steps-btn.s-jump-none  { transition: background-color 1500ms steps(5, jump-none); }
-.steps-btn.s-step-start { transition: background-color 1500ms step-start; }
+.steps-btn.s-jump-end {
+    transition: background-color 1500ms steps(5, jump-end);
+}
+
+.steps-btn.s-jump-start {
+    transition: background-color 1500ms steps(5, jump-start);
+}
+
+.steps-btn.s-jump-none {
+    transition: background-color 1500ms steps(5, jump-none);
+}
+
+.steps-btn.s-step-start {
+    transition: background-color 1500ms step-start;
+}
+
+/* :clicked demo — animation always plays full forward then full reverse */
+.clicked-btn {
+    background-color: #2d2d2d;
+    color: #cccccc;
+    border: 2px solid #555555;
+    border-radius: 4px;
+    padding: 10px 24px;
+    transition: background-color 500ms ease, border-color 500ms ease, color 500ms ease;
+}
+
+.clicked-btn:hover {
+    background-color: #3d3d3d;
+    border-color: #777777;
+}
+
+.clicked-btn:clicked {
+    background-color: #1a6bcc;
+    border-color: #5599ff;
+    color: white;
+}
+
+/* :active demo — transitions when window gains/loses focus */
+.active-demo {
+    background-color: #2a2a2a;
+    color: #555555;
+    border: 2px solid #3a3a3a;
+    border-radius: 4px;
+    padding: 12px 24px;
+    transition: all 400ms ease;
+}
+
+.active-demo:active {
+    background-color: #1a4a2a;
+    color: #66dd88;
+    border-color: #33aa55;
+}
+
+.active-demo:hover {
+    background-color: #1a4a2a;
+    color: #66dd88;
+    border-color: #33aa55;
+}
+
+/* event fallthrough test */
+.fallthrough-row {
+    background-color: #1a3a6b;
+    color: white;
+    border: 2px solid #2a5a9b;
+    border-radius: 4px;
+    padding: 8px 14px;
+    transition: background-color 500ms ease;
+}
+
+.fallthrough-row:clicked {
+    background-color: red;
+}
+
+.fallthrough-row .fallthrough-btn {
+    background-color: #1a3a6b;
+    color: white;
+    border: 2px solid #2a5a9b;
+    border-radius: 4px;
+    padding: 8px 14px;
+    transition: background-color 500ms ease;
+}
+
+.fallthrough-row .fallthrough-btn:pressed,
+.fallthrough-row .fallthrough-btn:clicked {
+    background-color: red;
+}

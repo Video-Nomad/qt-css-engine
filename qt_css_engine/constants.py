@@ -8,7 +8,7 @@ from .qt_compat.QtCore import QEasingCurve, QEvent, Qt
 # ---------------------------------------------------------------------------
 
 # Canonical property name for aliased shorthand forms.
-PROP_ALIASES: dict[str, str] = {"background": "background-color"}
+PROP_ALIASES: dict[str, str] = {"background": "background-color", "text-shadow": "box-shadow"}
 
 # Shorthand properties that expand to four longhands (top, right, bottom, left order).
 SHORTHAND_SIDES: dict[str, list[str]] = {
@@ -38,8 +38,8 @@ BORDER_WIDTH_KEYWORDS: frozenset[str] = frozenset({"thin", "medium", "thick"})
 PSEUDO_ALIASES: dict[str, str] = {}
 
 # Animation pseudo-classes the engine knows about, in descending priority order.
-ANIMATION_PSEUDOS: frozenset[str] = frozenset({":pressed", ":hover", ":focus", ":checked"})
-ANIMATION_PSEUDO_PRIORITY: tuple[str, ...] = (":pressed", ":hover", ":focus", ":checked")
+ANIMATION_PSEUDOS: frozenset[str] = frozenset({":pressed", ":hover", ":focus", ":checked", ":clicked", ":active"})
+ANIMATION_PSEUDO_PRIORITY: tuple[str, ...] = (":clicked", ":pressed", ":hover", ":focus", ":checked", ":active")
 
 # ---------------------------------------------------------------------------
 # Engine property sets

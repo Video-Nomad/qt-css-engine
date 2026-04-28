@@ -1,3 +1,5 @@
+import logging
+import os
 import sys
 from pathlib import Path
 
@@ -22,6 +24,8 @@ DISABLE_ANIMATIONS = False
 STYLESHEET_PATH = "demo" / Path("styles.css")
 
 dynamic_btns: list[QPushButton] = []
+
+logger = logging.basicConfig(level=logging.DEBUG)
 
 
 def add_widget(parent: QWidget) -> None:
@@ -93,6 +97,7 @@ def _dark_palette() -> QPalette:
 
 
 def main():
+    os.environ["CSS_ENGINE_EVENT_LOGGING"] = "1"
     app = QApplication(sys.argv)
     app.setPalette(_dark_palette())
 
@@ -353,8 +358,45 @@ def main():
     checkable_btn.clicked.connect(_check)
     layout.addWidget(checkable_btn)
 
+    # :clicked demo — animation always plays full forward then full reverse
+    clicked_btn = QPushButton(":clicked — full round-trip animation")
+    clicked_btn.setProperty("class", "clicked-btn")
+    layout.addWidget(clicked_btn)
+
+    # :active demo — widget transitions when window gains/loses focus
+    active_row = QFrame()
+    active_row_layout = QHBoxLayout(active_row)
+    active_row_layout.setContentsMargins(0, 0, 0, 0)
+    active_row_layout.setSpacing(8)
+
+    active_lbl = QLabel(":active — lights up when window is focused")
+    active_lbl.setProperty("class", "active-demo")
+    active_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    active_row_layout.addWidget(active_lbl, stretch=1)
+
+    popup_btn = QPushButton("Open Popup")
+    popup_btn.setProperty("class", "btn")
+    active_row_layout.addWidget(popup_btn)
+
+    layout.addWidget(active_row)
+
+    _popups: list[QWidget] = []
+
+    def _open_popup() -> None:
+        popup = QWidget(window, Qt.WindowType.Dialog)
+        popup.setWindowTitle("Popup — click main window to restore :active")
+        popup.resize(320, 80)
+        popup_inner = QVBoxLayout(popup)
+        popup_inner.addWidget(QLabel("Click the main window to trigger :active transition."))
+        _popups.append(popup)
+        popup.destroyed.connect(lambda: _popups.remove(popup) if popup in _popups else None)
+        popup.show()
+
+    popup_btn.clicked.connect(_open_popup)
+
     # steps() easing demo — hover each button to see discrete color jumps
     steps_row = QFrame()
+    steps_row.setProperty("class", "steps-row")
     steps_row_layout = QHBoxLayout(steps_row)
     steps_row_layout.setContentsMargins(0, 0, 0, 0)
     steps_row_layout.setSpacing(6)
@@ -369,6 +411,24 @@ def main():
         b.setProperty("class", f"steps-btn {variant}")
         steps_row_layout.addWidget(b)
     layout.addWidget(steps_row)
+
+    # Fallthrough test — right and middle buttons trigger parent widget
+    fallthrough_base = QFrame()
+    fallthrough_base.setProperty("class", "fallthrough-row")
+    fallthrough_layout = QHBoxLayout(fallthrough_base)
+    fallthrough_layout.setContentsMargins(0, 0, 0, 0)
+    fallthrough_layout.setSpacing(6)
+    fallthrough_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+    for variant, label in (
+        ("btn1", "btn1"),
+        ("btn2", "btn2"),
+        ("btn3", "btn3"),
+        ("btn4", "btn4"),
+    ):
+        b = QPushButton(label)
+        b.setProperty("class", f"fallthrough-btn {variant}")
+        fallthrough_layout.addWidget(b)
+    layout.addWidget(fallthrough_base)
 
     window.show()
     sys.exit(app.exec())

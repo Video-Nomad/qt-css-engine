@@ -20,3 +20,16 @@ def qt_delete(obj: Any) -> None:
         from PyQt6 import sip
 
         sip.delete(obj)  # type: ignore
+
+
+def is_qobject_alive(obj: Any) -> bool:
+    """True if the underlying C++ QObject still exists."""
+    if obj is None:
+        return False
+    if USE_PYSIDE6:
+        from shiboken6 import Shiboken
+
+        return bool(Shiboken.isValid(obj))  # type: ignore
+    from PyQt6 import sip
+
+    return not sip.isdeleted(obj)  # type: ignore
