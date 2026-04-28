@@ -104,7 +104,14 @@ class BoxShadowHandle(QObject):
         if not is_running and target == self._current:
             return
 
-        if is_running and self._anim_origin is not None and target == self._anim_origin and self._end is not None:
+        is_steps = self.anim.easingCurve().type() == QEasingCurve.Type.Custom
+        if (
+            is_steps
+            and is_running
+            and self._anim_origin is not None
+            and target == self._anim_origin
+            and self._end is not None
+        ):
             # Reversing to origin — swap start/end and seek so steps() retraces original path.
             dur = max(1, self.anim.duration())
             raw_p = min(self.anim.currentTime(), dur) / dur
@@ -201,8 +208,11 @@ class ColorAnimation(QObject):
         is_running = self.anim.state() == self.anim.State.Running
         if is_running and target_color == self.end_color:
             return
+        if not is_running and target_color == self.current_color:
+            return
 
-        if is_running and self._anim_origin_color is not None and target_color == self._anim_origin_color:
+        is_steps = self.anim.easingCurve().type() == QEasingCurve.Type.Custom
+        if is_steps and is_running and self._anim_origin_color is not None and target_color == self._anim_origin_color:
             # Reversing to origin — swap start/end and seek so steps() retraces original path.
             dur = max(1, self.anim.duration())
             raw_p = min(self.anim.currentTime(), dur) / dur
@@ -271,6 +281,10 @@ class GenericPropertyAnimation(QObject):
         self.anim.valueChanged.connect(self._on_tick)
         self.anim.finished.connect(self._on_finished)
 
+        # Explicitly tick so the initial value is immediately written to the scoped stylesheet
+        # TODO: test if needed
+        # self._on_tick(self.current_val)
+
     @property
     def _props(self) -> dict[str, str]:
         """Live css_anim_props dict from context, or widget fallback for standalone use."""
@@ -335,8 +349,12 @@ class GenericPropertyAnimation(QObject):
         is_running = self.anim.state() == self.anim.State.Running
         if is_running and t_val == self.anim.endValue():
             return
+        if not is_running and abs(t_val - self.current_val) < 1e-6:
+            return
 
-        if is_running and self._anim_origin_val is not None and abs(t_val - self._anim_origin_val) < 1e-6:
+        # Specific for handling steps()
+        is_steps = self.anim.easingCurve().type() == QEasingCurve.Type.Custom
+        if is_steps and is_running and self._anim_origin_val is not None and abs(t_val - self._anim_origin_val) < 1e-6:
             # Reversing to origin — swap start/end and seek so steps() retraces original path.
             dur = max(1, self.anim.duration())
             raw_p = min(self.anim.currentTime(), dur) / dur
@@ -357,6 +375,9 @@ class GenericPropertyAnimation(QObject):
         self.anim.setStartValue(self.current_val)
         self.anim.setEndValue(t_val)
         self.anim.start()
+        # Explicitly tick so the initial value is immediately written to the scoped stylesheet
+        # TODO: test if needed
+        # self._on_tick(self.current_val)
 
 
 class OpacityAnimation(QObject):

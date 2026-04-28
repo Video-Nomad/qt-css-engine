@@ -543,6 +543,7 @@ class TransitionEngine(QObject):
         ctx = self._contexts.pop(wid, None)
         if ctx is None:
             return
+        event_logger.debug("On widget destroyed: %s", widget)
         for timer in ctx.pending_delays.values():
             try:
                 timer.stop()
@@ -693,21 +694,54 @@ class TransitionEngine(QObject):
         if not cause.is_class_driven and prop in ctx.class_anim_props:
             return False
 
-        target_raw, is_natural_target = self._resolve_target_raw(widget, base_props, target_props, prop)
+        # Retrieve the existing animation before resolving the target so we can supply
+        # its stored natural_val as a hint.  natural_val is captured at animation-creation
+        # time (before any inline constraint is ever applied) and is therefore the correct
+        # unconstrained size for the return trip.  Passing it as natural_hint lets
+        # _resolve_target_raw skip _get_natural_size entirely — layout-activation
+        # measurements are unreliable when ancestor containers still hold stale
+        # animation-inflated geometry and Qt's dirty flag hasn't fully propagated.
+        anim_obj = ctx.active_animations.get(prop)
+        natural_hint: str | None = None
+        if (
+            isinstance(anim_obj, GenericPropertyAnimation)
+            and prop in ctx.css_anim_props
+            and prop in SIZE_PROPS
+            and not (target_props.get(prop) or base_props.get(prop))
+            and not cause.is_class_driven  # class-change may alter natural size; re-measure instead
+        ):
+            natural_hint = f"{anim_obj.natural_val:.3f}{anim_obj.unit}"
+
+        # Freeze current size into css_anim_props before _resolve_target_raw calls _get_natural_size.
+        # This prevents _get_natural_size's finally block from leaving the widget unconstrained
+        # if the size was previously governed by the main stylesheet rather than an inline animation.
+        frozen_prop = False
+        if not anim_obj and prop not in ctx.css_anim_props and prop in SIZE_PROPS:
+            current_raw = self._resolve_current_raw(widget, ctx, prop, base_props, base_props.get(prop, "auto"))
+            if current_raw and current_raw != "auto":
+                ctx.css_anim_props[prop] = current_raw
+                frozen_prop = True
+
+        target_raw, is_natural_target = self._resolve_target_raw(widget, base_props, target_props, prop, natural_hint)
         if not target_raw:
+            if frozen_prop:
+                del ctx.css_anim_props[prop]
             return False
 
         base_raw = base_props.get(prop)
         if not base_raw or base_raw == "auto":
             base_raw = get_preferred_size_fallback(widget, base_props, prop) if prop in SIZE_PROPS else target_raw
 
-        anim_obj = ctx.active_animations.get(prop)
-
         # Natural-state target with nothing running: Qt lays out at natural size without intervention.
         # Exception: if a frozen inline constraint exists (written during a pending delay), we must
         # animate to clear it — Qt cannot reach the natural size while the inline style constrains it.
-        if is_natural_target and not anim_obj and not ctx.pre_polish_size and prop not in ctx.css_anim_props:
-            return False
+        if is_natural_target and not anim_obj and not ctx.pre_polish_size:
+            # If the only reason prop is in css_anim_props is our freeze above, it shouldn't animate.
+            is_truly_unconstrained = prop not in ctx.css_anim_props or frozen_prop
+            if is_truly_unconstrained:
+                if frozen_prop:
+                    del ctx.css_anim_props[prop]
+                return False
 
         # clean_on_finish already removed this prop — animation completed successfully and the
         # widget is at its natural layout size.  Any re-evaluation triggered by _on_class_anim_done
@@ -724,12 +758,15 @@ class TransitionEngine(QObject):
             # changes) don't trigger spurious setStyleSheet calls.
             # Effect props (opacity, box-shadow, text-shadow) are *not* rendered by Qt QSS —
             # they need a QGraphicsEffect installed by _snap_prop_or_effect, so never skip them.
+            is_truly_unconstrained_for_snap = prop not in ctx.css_anim_props or frozen_prop
             if (
                 prop not in EFFECT_PROPS
                 and not anim_obj
-                and prop not in ctx.css_anim_props
+                and is_truly_unconstrained_for_snap
                 and target_raw == base_props.get(prop)
             ):
+                if frozen_prop:
+                    del ctx.css_anim_props[prop]
                 return False
             return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target)
 
@@ -770,8 +807,6 @@ class TransitionEngine(QObject):
 
         if anim_obj:
             if is_natural_target and isinstance(anim_obj, GenericPropertyAnimation):
-                # target_raw was computed by _get_natural_size (layout-assigned natural width),
-                # so use it directly rather than the stale anim_obj.natural_val.
                 anim_obj.set_target(target_raw, clean_on_finish=True)
             else:
                 anim_obj.set_target(target_raw)
@@ -847,6 +882,7 @@ class TransitionEngine(QObject):
         base_props: dict[str, str],
         target_props: dict[str, str],
         prop: str,
+        natural_hint: str | None = None,
     ) -> tuple[str, bool]:
         """
         Resolve the CSS target value and whether it's a natural (unconstrained) target.
@@ -855,45 +891,23 @@ class TransitionEngine(QObject):
         return to its unconstrained layout size. For size props we animate toward sizeHint()
         then remove the constraint via clean_on_finish=True.
 
+        natural_hint: pre-computed natural size string from the animation's stored
+        natural_val.  When supplied it is used instead of calling _get_natural_size,
+        avoiding an unreliable layout-activation measurement.
+
         Returns (target_raw, is_natural_target). target_raw is "" when there is no value
         and the property is non-animatable (caller should return early).
         """
         target_raw = target_props.get(prop) or base_props.get(prop)
         is_natural_target = prop in SIZE_PROPS and (not target_raw or target_raw == "auto")
         if target_raw == "auto":
-            target_raw = self._get_natural_size(widget, base_props, prop)
+            target_raw = natural_hint or self._get_natural_size(widget, base_props, prop)
         if not target_raw:
             if prop in SIZE_PROPS:
-                target_raw = self._get_natural_size(widget, base_props, prop)
+                target_raw = natural_hint or self._get_natural_size(widget, base_props, prop)
             elif "color" in prop:
                 target_raw = "white" if prop == "color" else "transparent"
         return target_raw or "", is_natural_target
-
-    def _refresh_natural_val(
-        self,
-        anim_obj: Animation,
-        widget: QWidget,
-        ctx: WidgetContext,
-        base_props: dict[str, str],
-        prop: str,
-        is_natural_target: bool,
-    ) -> None:
-        """
-        Update natural_val when returning to natural size after a class-change.
-
-        natural_val may hold the old constrained size from a prior hover animation.
-        Re-derive it from sizeHint() which reflects the unconstrained preferred size
-        immediately after polish, before the layout has reflowed.
-        Only applicable when pre_polish_size is set (i.e. a class-change is in progress).
-        """
-        if not (
-            is_natural_target and isinstance(anim_obj, GenericPropertyAnimation) and ctx.pre_polish_size is not None
-        ):
-            return
-        natural_str = self._get_natural_size(widget, base_props, prop)
-        natural_num = parse_css_val(natural_str)
-        if isinstance(natural_num, (int, float)):
-            anim_obj.natural_val = float(natural_num)
 
     def _cleanup_orphans(
         self, _widget: QWidget, ctx: WidgetContext, all_animated_props: set[str], base_props: dict[str, str]
@@ -948,7 +962,9 @@ class TransitionEngine(QObject):
         # in any rule and have no backing animation object (e.g. a prop was removed from
         # CSS and the widget was re-evaluated via Polish with old rules during hot-reload).
         stale_snapped = {
-            p for p in ctx.css_anim_props if p not in all_animated_props and p not in ctx.active_animations
+            p
+            for p in ctx.css_anim_props
+            if p not in all_animated_props and p not in ctx.active_animations and p not in base_props
         }
         if stale_snapped:
             for p in stale_snapped:
@@ -1110,6 +1126,28 @@ class TransitionEngine(QObject):
         stripped = {k: v for k, v in ctx.css_anim_props.items() if k not in constrained}
         parent = widget.parentWidget()
         parent_layout = parent.layout() if parent is not None else None
+
+        # Collect ancestor layouts outermost-first.  When the inline size constraint is
+        # stripped, activating only the immediate parent redistributes children within the
+        # parent container's *current* (animation-inflated) size — sibling buttons expand
+        # to fill the stale wide frame and we measure the wrong natural width.  Activating
+        # from outermost to innermost lets each ancestor shrink to its unconstrained
+        # sizeHint before the next level redistributes, giving the true natural width.
+        ancestors: list[QWidget] = []
+        if parent_layout is not None:
+            w: QWidget | None = widget
+            while w is not None:
+                ancestors.append(w)
+                w = w.parentWidget()
+            ancestors.reverse()  # outermost first
+
+        window = widget.window()
+        was_updates_enabled = False
+        if window is not None:
+            was_updates_enabled = window.updatesEnabled()
+            if was_updates_enabled:
+                window.setUpdatesEnabled(False)
+
         ctx.internal_write_depth += 1
         ctx.internal_write_reason = InternalWriteReason.MEASURE
         try:
@@ -1117,7 +1155,13 @@ class TransitionEngine(QObject):
             # setStyleSheet() calls style.polish() synchronously, which updates
             # widget.maximumWidth/minimumWidth.  activate() then assigns the natural size.
             if parent_layout is not None:
-                parent_layout.activate()
+                for w_ in ancestors:
+                    w_.updateGeometry()
+                    if (l_ := w_.layout()) is not None:
+                        l_.invalidate()
+                for w_ in ancestors:
+                    if (l_ := w_.layout()) is not None:
+                        l_.activate()
                 raw_px = widget.width() if "width" in prop else widget.height()
                 actual = content_box_px(widget, base_props, prop, raw_px)
                 result = f"{actual}px" if actual > 0 else get_preferred_size_fallback(widget, base_props, prop)
@@ -1127,10 +1171,18 @@ class TransitionEngine(QObject):
             widget.setStyleSheet(scoped_anim_style(widget, ctx.css_anim_props))
             # Restore the constrained geometry so there is no flash before animation starts.
             if parent_layout is not None:
-                parent_layout.activate()
+                for w_ in ancestors:
+                    w_.updateGeometry()
+                    if (l_ := w_.layout()) is not None:
+                        l_.invalidate()
+                for w_ in ancestors:
+                    if (l_ := w_.layout()) is not None:
+                        l_.activate()
             ctx.internal_write_depth -= 1
             if ctx.internal_write_depth == 0:
                 ctx.internal_write_reason = None
+            if was_updates_enabled and window is not None:
+                window.setUpdatesEnabled(True)
         return result
 
     def _is_animatable(self, prop: str) -> bool:

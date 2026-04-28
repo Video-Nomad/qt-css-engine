@@ -1,3 +1,5 @@
+import logging
+import os
 import sys
 from pathlib import Path
 
@@ -22,6 +24,8 @@ DISABLE_ANIMATIONS = False
 STYLESHEET_PATH = "demo" / Path("styles.css")
 
 dynamic_btns: list[QPushButton] = []
+
+logger = logging.basicConfig(level=logging.DEBUG)
 
 
 def add_widget(parent: QWidget) -> None:
@@ -93,6 +97,7 @@ def _dark_palette() -> QPalette:
 
 
 def main():
+    os.environ["CSS_ENGINE_EVENT_LOGGING"] = "1"
     app = QApplication(sys.argv)
     app.setPalette(_dark_palette())
 
