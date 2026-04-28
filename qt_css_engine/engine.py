@@ -1,7 +1,8 @@
 import logging
 import os
 import re
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from .constants import CURSOR_MAP, EASING_MAP, EFFECT_PROPS, PSEUDO_EVENTS, SIZE_PROPS, SUPPORTED_NUMERIC_PROPS
 from .handlers import (
@@ -547,22 +548,20 @@ class TransitionEngine(QObject):
         for timer in ctx.pending_delays.values():
             try:
                 timer.stop()
-                timer.timeout.disconnect()
                 timer.deleteLater()
             except RuntimeError, TypeError:
                 pass
+            self._safe_disconnect(timer.timeout)
         ctx.pending_delays.clear()
         for prop, cb in ctx.class_anim_callbacks.items():
-            anim_obj = ctx.active_animations.get(prop)
-            if anim_obj is not None:
+            if (anim_obj := ctx.active_animations.get(prop)) is not None:
                 try:
                     anim_obj.anim.finished.disconnect(cb)
                 except RuntimeError, TypeError:
                     pass
         ctx.class_anim_callbacks.clear()
         for prop, cb in ctx.clicked_anim_callbacks.items():
-            anim_obj = ctx.active_animations.get(prop)
-            if anim_obj is not None:
+            if (anim_obj := ctx.active_animations.get(prop)) is not None:
                 try:
                     anim_obj.anim.finished.disconnect(cb)
                 except RuntimeError, TypeError:
@@ -737,16 +736,23 @@ class TransitionEngine(QObject):
             widget, ctx, prop, anim_obj, base_props, base_raw, target_raw, is_natural_target, trans, cause
         )
 
+    @staticmethod
+    def _safe_disconnect(signal: Any, callback: Callable[..., Any] | None = None) -> None:
+        try:
+            if callback is not None:
+                signal.disconnect(callback)
+            else:
+                signal.disconnect()
+        except RuntimeError, TypeError:
+            pass
+
     def _cancel_pending_delay(self, ctx: WidgetContext, prop: str) -> None:
         """Stop and discard the pending delay timer for prop, if any."""
         old_timer = ctx.pending_delays.pop(prop, None)
         if old_timer is None:
             return
         old_timer.stop()
-        try:
-            old_timer.timeout.disconnect()
-        except RuntimeError, TypeError:
-            pass
+        self._safe_disconnect(old_timer.timeout)
         old_timer.deleteLater()
 
     def _unfreeze(self, ctx: WidgetContext, prop: str, frozen: bool) -> bool:
@@ -887,12 +893,8 @@ class TransitionEngine(QObject):
         wid = id(widget)
         # Disconnect previous callback before connecting a new one — rapid class changes
         # would otherwise accumulate closures on the finished signal.
-        old_cb = ctx.class_anim_callbacks.pop(prop, None)
-        if old_cb is not None:
-            try:
-                anim_obj.anim.finished.disconnect(old_cb)
-            except RuntimeError, TypeError:
-                pass
+        if (old_cb := ctx.class_anim_callbacks.pop(prop, None)) is not None:
+            self._safe_disconnect(anim_obj.anim.finished, old_cb)
 
         def _on_done(_w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen) -> None:
             c = self._contexts.get(_wid)
@@ -909,12 +911,8 @@ class TransitionEngine(QObject):
         """Register a finished-signal callback that deactivates :clicked once all forward-phase animations complete."""
         gen = ctx.clicked_anim_gen
         wid = id(widget)
-        old_cb = ctx.clicked_anim_callbacks.pop(prop, None)
-        if old_cb is not None:
-            try:
-                anim_obj.anim.finished.disconnect(old_cb)
-            except RuntimeError, TypeError:
-                pass
+        if (old_cb := ctx.clicked_anim_callbacks.pop(prop, None)) is not None:
+            self._safe_disconnect(anim_obj.anim.finished, old_cb)
 
         def _on_done(_w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen) -> None:
             c = self._contexts.get(_wid)
@@ -978,12 +976,8 @@ class TransitionEngine(QObject):
             if prop in all_animated_props:
                 continue
             ctx.class_anim_props.discard(prop)
-            old_cb = ctx.class_anim_callbacks.pop(prop, None)
-            if old_cb is not None:
-                try:
-                    orphan.anim.finished.disconnect(old_cb)
-                except RuntimeError, TypeError:
-                    pass
+            if (old_cb := ctx.class_anim_callbacks.pop(prop, None)) is not None:
+                self._safe_disconnect(orphan.anim.finished, old_cb)
             snap_target = base_props.get(prop)
             if snap_target == "auto":
                 snap_target = None
@@ -1054,18 +1048,14 @@ class TransitionEngine(QObject):
             for timer in ctx.pending_delays.values():
                 try:
                     timer.stop()
-                    timer.timeout.disconnect()
                     timer.deleteLater()
                 except RuntimeError, TypeError:
                     pass
+                self._safe_disconnect(timer.timeout)
             ctx.pending_delays.clear()
-            for prop, cb in list(ctx.clicked_anim_callbacks.items()):
-                anim_obj = ctx.active_animations.get(prop)
-                if anim_obj is not None:
-                    try:
-                        anim_obj.anim.finished.disconnect(cb)
-                    except RuntimeError, TypeError:
-                        pass
+            for prop, cb in ctx.clicked_anim_callbacks.items():
+                if (anim_obj := ctx.active_animations.get(prop)) is not None:
+                    self._safe_disconnect(anim_obj.anim.finished, cb)
             ctx.clicked_anim_callbacks.clear()
             ctx.clicked_anim_props.clear()
             ctx.active_pseudos.discard(":clicked")
