@@ -678,115 +678,157 @@ class TransitionEngine(QObject):
         cause: EvaluationCause,
     ) -> bool:
         """Drive the animation for a single property. Returns True if a batched style update is needed."""
-        # Cancel any pending delay for this prop unconditionally — the widget state has changed
-        # (new pseudo, class-change, window deactivate, etc.) and a fresh evaluation is in progress.
-        old_timer = ctx.pending_delays.pop(prop, None)
-        if old_timer is not None:
-            old_timer.stop()
-            try:
-                old_timer.timeout.disconnect()
-            except RuntimeError, TypeError:
-                pass
-            old_timer.deleteLater()
+        # Cancel any pending delay — widget state changed, fresh evaluation in progress.
+        self._cancel_pending_delay(ctx, prop)
 
         # Class-change animations take priority over pseudo-state changes (hover/focus).
         # Defer until the class-change animation finishes, then re-evaluate picks up hover.
         if not cause.is_class_driven and prop in ctx.class_anim_props:
             return False
 
-        # Retrieve the existing animation before resolving the target so we can supply
-        # its stored natural_val as a hint.  natural_val is captured at animation-creation
-        # time (before any inline constraint is ever applied) and is therefore the correct
-        # unconstrained size for the return trip.  Passing it as natural_hint lets
-        # _resolve_target_raw skip _get_natural_size entirely — layout-activation
-        # measurements are unreliable when ancestor containers still hold stale
-        # animation-inflated geometry and Qt's dirty flag hasn't fully propagated.
         anim_obj = ctx.active_animations.get(prop)
-        natural_hint: str | None = None
-        if (
-            isinstance(anim_obj, GenericPropertyAnimation)
-            and prop in ctx.css_anim_props
-            and prop in SIZE_PROPS
-            and not (target_props.get(prop) or base_props.get(prop))
-            and not cause.is_class_driven  # class-change may alter natural size; re-measure instead
-        ):
-            natural_hint = f"{anim_obj.natural_val:.3f}{anim_obj.unit}"
+        natural_hint = self._natural_hint_from_anim(anim_obj, ctx, prop, target_props, base_props, cause)
 
         # Freeze current size into css_anim_props before _resolve_target_raw calls _get_natural_size.
-        # This prevents _get_natural_size's finally block from leaving the widget unconstrained
-        # if the size was previously governed by the main stylesheet rather than an inline animation.
-        frozen_prop = False
-        if not anim_obj and prop not in ctx.css_anim_props and prop in SIZE_PROPS:
-            current_raw = self._resolve_current_raw(widget, ctx, prop, base_props, base_props.get(prop, "auto"))
-            if current_raw and current_raw != "auto":
-                ctx.css_anim_props[prop] = current_raw
-                frozen_prop = True
+        # Prevents _get_natural_size's finally block from leaving the widget unconstrained when the
+        # size was previously governed by the main stylesheet rather than an inline animation.
+        frozen = self._maybe_freeze_prop(widget, ctx, prop, base_props, anim_obj)
 
         target_raw, is_natural_target = self._resolve_target_raw(widget, base_props, target_props, prop, natural_hint)
         if not target_raw:
-            if frozen_prop:
-                del ctx.css_anim_props[prop]
-            return False
+            return self._unfreeze(ctx, prop, frozen)
 
         base_raw = base_props.get(prop)
         if not base_raw or base_raw == "auto":
             base_raw = get_preferred_size_fallback(widget, base_props, prop) if prop in SIZE_PROPS else target_raw
 
-        # Natural-state target with nothing running: Qt lays out at natural size without intervention.
-        # Exception: if a frozen inline constraint exists (written during a pending delay), we must
-        # animate to clear it — Qt cannot reach the natural size while the inline style constrains it.
+        # Natural target with nothing running: Qt lays out at natural size without intervention.
+        # Exception: a frozen inline constraint (written during a pending delay) must be animated
+        # away — Qt cannot reach natural size while the inline style constrains it.
         if is_natural_target and not anim_obj and not ctx.pre_polish_size:
             # If the only reason prop is in css_anim_props is our freeze above, it shouldn't animate.
-            is_truly_unconstrained = prop not in ctx.css_anim_props or frozen_prop
-            if is_truly_unconstrained:
-                if frozen_prop:
-                    del ctx.css_anim_props[prop]
-                return False
+            if prop not in ctx.css_anim_props or frozen:
+                return self._unfreeze(ctx, prop, frozen)
 
-        # clean_on_finish already removed this prop — animation completed successfully and the
-        # widget is at its natural layout size.  Any re-evaluation triggered by _on_class_anim_done
-        # must not restart the animation toward get_preferred_size_fallback (sizeHint), which would
-        # be wrong for stretch-fill widgets whose natural width > sizeHint.
+        # clean_on_finish already removed this prop — animation completed and widget is at natural size.
+        # Must not restart toward sizeHint(), which is wrong for stretch-fill widgets.
         if is_natural_target and anim_obj and prop not in ctx.css_anim_props:
             return False
 
         # No transition declared → snap.
         if prop not in target_transitions:
-            # If no animation was running and no prior inline value, and the target equals the
-            # base value Qt's QSS already renders, the engine has nothing to override.  Skip
-            # writing to css_anim_props so unrelated Polish events (e.g. dynamic property
-            # changes) don't trigger spurious setStyleSheet calls.
-            # Effect props (opacity, box-shadow, text-shadow) are *not* rendered by Qt QSS —
-            # they need a QGraphicsEffect installed by _snap_prop_or_effect, so never skip them.
-            is_truly_unconstrained_for_snap = prop not in ctx.css_anim_props or frozen_prop
+            # Skip overriding Qt QSS when target == base and nothing holds an inline value —
+            # avoids spurious setStyleSheet calls on unrelated Polish events.
+            # Effect props always need _snap_prop_or_effect (QGraphicsEffect, not QSS).
             if (
                 prop not in EFFECT_PROPS
                 and not anim_obj
-                and is_truly_unconstrained_for_snap
+                and (prop not in ctx.css_anim_props or frozen)
                 and target_raw == base_props.get(prop)
             ):
-                if frozen_prop:
-                    del ctx.css_anim_props[prop]
-                return False
+                return self._unfreeze(ctx, prop, frozen)
             return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target)
 
         trans = target_transitions[prop]
         if trans.duration_ms == 0 or not self.animations_enabled or cause.snaps_transitions:
             return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target)
 
-        # Animated path: create or update animation object, then point it at the new target.
+        return self._start_or_retarget_anim(
+            widget, ctx, prop, anim_obj, base_props, base_raw, target_raw, is_natural_target, trans, cause
+        )
+
+    def _cancel_pending_delay(self, ctx: WidgetContext, prop: str) -> None:
+        """Stop and discard the pending delay timer for prop, if any."""
+        old_timer = ctx.pending_delays.pop(prop, None)
+        if old_timer is None:
+            return
+        old_timer.stop()
+        try:
+            old_timer.timeout.disconnect()
+        except RuntimeError, TypeError:
+            pass
+        old_timer.deleteLater()
+
+    def _unfreeze(self, ctx: WidgetContext, prop: str, frozen: bool) -> bool:
+        """Remove the freeze entry from css_anim_props if we created it."""
+        if frozen:
+            del ctx.css_anim_props[prop]
+        return False
+
+    def _natural_hint_from_anim(
+        self,
+        anim_obj: Animation | None,
+        ctx: WidgetContext,
+        prop: str,
+        target_props: dict[str, str],
+        base_props: dict[str, str],
+        cause: EvaluationCause,
+    ) -> str | None:
+        """
+        Return the stored natural size from a running GenericPropertyAnimation, or None.
+
+        natural_val is captured at animation-creation time (before any inline constraint is applied)
+        and is the correct unconstrained size for the return trip. Using it avoids calling
+        _get_natural_size, whose layout-activation measurements are unreliable when ancestor
+        containers still hold stale animation-inflated geometry.
+        Class-change causes always re-measure instead — the change may alter the natural size.
+        """
+        if not (
+            isinstance(anim_obj, GenericPropertyAnimation)
+            and prop in ctx.css_anim_props
+            and prop in SIZE_PROPS
+            and not (target_props.get(prop) or base_props.get(prop))
+            and not cause.is_class_driven
+        ):
+            return None
+        return f"{anim_obj.natural_val:.3f}{anim_obj.unit}"
+
+    def _maybe_freeze_prop(
+        self,
+        widget: QWidget,
+        ctx: WidgetContext,
+        prop: str,
+        base_props: dict[str, str],
+        anim_obj: Animation | None,
+    ) -> bool:
+        """
+        Snapshot the widget's current rendered size into css_anim_props for size props that have no
+        active animation and no prior inline value. Returns True if a freeze entry was written.
+
+        The freeze ensures _get_natural_size's finally block finds a constraint to restore,
+        preventing a visible flash before the animation begins.
+        """
+        if anim_obj or prop in ctx.css_anim_props or prop not in SIZE_PROPS:
+            return False
+        current_raw = self._resolve_current_raw(widget, ctx, prop, base_props, base_props.get(prop, "auto"))
+        if not current_raw or current_raw == "auto":
+            return False
+        ctx.css_anim_props[prop] = current_raw
+        return True
+
+    def _start_or_retarget_anim(
+        self,
+        widget: QWidget,
+        ctx: WidgetContext,
+        prop: str,
+        anim_obj: Animation | None,
+        base_props: dict[str, str],
+        base_raw: str,
+        target_raw: str,
+        is_natural_target: bool,
+        trans: TransitionSpec,
+        cause: EvaluationCause,
+    ) -> bool:
+        """Create, re-target, or update a running animation for prop. Always returns False."""
         curve = self._resolve_easing_curve(trans.easing)
         is_running = anim_obj is not None and anim_obj.anim.state() == QAbstractAnimation.State.Running
 
         if not is_running:
-            # Delay applies on both fresh starts and re-starts of stopped/finished animations.
-            # Only re-targeting an actively running animation skips the delay.
+            # Positive delay: freeze current value and schedule; skip until delay fires.
+            # Delay applies on fresh starts and restarts; only mid-flight re-targeting skips it.
             if trans.delay_ms > 0 and cause is not EvaluationCause.DELAY_FIRE:
-                # Freeze the current rendered value so Qt doesn't immediately apply the new
-                # class/state values during the delay period (class-based QSS rules are not
-                # stripped, so without this the widget would visually snap to the new state).
-                # Effect props (opacity, box-shadow) are managed via QGraphicsEffect — no inline
-                # style needed, and their value is not held in css_anim_props.
+                # Effect props (opacity, box-shadow) are managed via QGraphicsEffect — their value
+                # is not held in css_anim_props, so no inline freeze is needed.
                 if prop not in EFFECT_PROPS:
                     current_raw = self._resolve_current_raw(widget, ctx, prop, base_props, base_raw)
                     ctx.css_anim_props[prop] = current_raw
@@ -805,76 +847,84 @@ class TransitionEngine(QObject):
                 # Running: re-target mid-flight without delay.
                 anim_obj.update_spec(trans.duration_ms, curve)
 
-        if anim_obj:
-            if is_natural_target and isinstance(anim_obj, GenericPropertyAnimation):
-                anim_obj.set_target(target_raw, clean_on_finish=True)
-            else:
-                anim_obj.set_target(target_raw)
-            # Negative transition-delay: animation starts immediately but offset |delay| ms into
-            # the timeline, as if it had already been running that long (CSS spec §transition-delay).
-            # Only on fresh starts; re-targeting a running animation skips this.
-            if not is_running and trans.delay_ms < 0:
-                seek_ms = min(-trans.delay_ms, trans.duration_ms)
-                anim_obj.anim.setCurrentTime(seek_ms)
+        if not anim_obj:
+            return False
 
-            # Track class-change-initiated animations; re-evaluate on finish for deferred hover.
-            if cause.is_class_driven and anim_obj.anim.state() == QAbstractAnimation.State.Running:
-                ctx.class_anim_props.add(prop)
-                gen = ctx.class_anim_gen
-                wid = id(widget)
+        if is_natural_target and isinstance(anim_obj, GenericPropertyAnimation):
+            anim_obj.set_target(target_raw, clean_on_finish=True)
+        else:
+            anim_obj.set_target(target_raw)
 
-                # Disconnect the previous callback for this prop before connecting a new one.
-                # Without this, rapid class changes accumulate closures on the finished signal.
-                old_cb = ctx.class_anim_callbacks.pop(prop, None)
-                if old_cb is not None:
-                    try:
-                        anim_obj.anim.finished.disconnect(old_cb)
-                    except RuntimeError, TypeError:
-                        pass
+        # Negative transition-delay: start immediately but seek |delay| ms into the timeline,
+        # as if the animation had already been running that long (CSS spec §transition-delay).
+        # Only on fresh starts; re-targeting a running animation skips this.
+        if not is_running and trans.delay_ms < 0:
+            anim_obj.anim.setCurrentTime(min(-trans.delay_ms, trans.duration_ms))
 
-                def _on_class_anim_done(_w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen) -> None:
-                    # Do NOT pop from class_anim_callbacks here — the next class change will
-                    # disconnect and replace this.  Self-popping causes the next click to find
-                    # no old callback to disconnect, re-connecting a second slot on the same signal.
-                    c = self._contexts.get(_wid)
-                    if c and _gen == c.class_anim_gen and _p in c.class_anim_props:
-                        c.class_anim_props.discard(_p)
-                        # Re-evaluate immediately so this prop can pick up deferred hover/focus
-                        # changes as soon as its class animation unblocks it.  Other props that
-                        # are still class-animating stay blocked via the class_anim_props check
-                        # in _apply_prop_animation, so their animations are not disturbed.
-                        self._evaluate_widget_state(_w, cause=EvaluationCause.CLASS_ANIMATION_FINISH)
+        if cause.is_class_driven and anim_obj.anim.state() == QAbstractAnimation.State.Running:
+            self._wire_class_anim_callback(widget, ctx, prop, anim_obj)
 
-                ctx.class_anim_callbacks[prop] = _on_class_anim_done
-                anim_obj.anim.finished.connect(_on_class_anim_done)
+        if (
+            cause.is_clicked_driven
+            and prop in ctx.clicked_anim_props
+            and anim_obj.anim.state() == QAbstractAnimation.State.Running
+        ):
+            self._wire_clicked_anim_callback(widget, ctx, prop, anim_obj)
 
-            # Track :clicked forward-phase animations; deactivate :clicked when all finish.
-            if (
-                cause.is_clicked_driven
-                and prop in ctx.clicked_anim_props
-                and anim_obj.anim.state() == QAbstractAnimation.State.Running
-            ):
-                gen = ctx.clicked_anim_gen
-                wid = id(widget)
-                old_cb = ctx.clicked_anim_callbacks.pop(prop, None)
-                if old_cb is not None:
-                    try:
-                        anim_obj.anim.finished.disconnect(old_cb)
-                    except RuntimeError, TypeError:
-                        pass
-
-                def _on_clicked_anim_done(
-                    _w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen
-                ) -> None:
-                    c = self._contexts.get(_wid)
-                    if c and _gen == c.clicked_anim_gen and _p in c.clicked_anim_props:
-                        c.clicked_anim_props.discard(_p)
-                        if not c.clicked_anim_props:
-                            self._deactivate_clicked(_w, _wid, _gen)
-
-                ctx.clicked_anim_callbacks[prop] = _on_clicked_anim_done
-                anim_obj.anim.finished.connect(_on_clicked_anim_done)
         return False
+
+    def _wire_class_anim_callback(self, widget: QWidget, ctx: WidgetContext, prop: str, anim_obj: Animation) -> None:
+        """
+        Register a finished-signal callback that unblocks prop from class_anim_props and
+        re-evaluates the widget so deferred hover/focus changes take effect.
+
+        The callback intentionally does NOT self-remove from class_anim_callbacks — the next
+        class change disconnects and replaces it. Self-removal would cause the next class change
+        to miss the old callback, re-connecting a second slot on the same signal.
+        """
+        ctx.class_anim_props.add(prop)
+        gen = ctx.class_anim_gen
+        wid = id(widget)
+        # Disconnect previous callback before connecting a new one — rapid class changes
+        # would otherwise accumulate closures on the finished signal.
+        old_cb = ctx.class_anim_callbacks.pop(prop, None)
+        if old_cb is not None:
+            try:
+                anim_obj.anim.finished.disconnect(old_cb)
+            except RuntimeError, TypeError:
+                pass
+
+        def _on_done(_w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen) -> None:
+            c = self._contexts.get(_wid)
+            if c and _gen == c.class_anim_gen and _p in c.class_anim_props:
+                c.class_anim_props.discard(_p)
+                # Re-evaluate so this prop picks up deferred hover/focus changes immediately.
+                # Other props still in class_anim_props stay blocked and are not disturbed.
+                self._evaluate_widget_state(_w, cause=EvaluationCause.CLASS_ANIMATION_FINISH)
+
+        ctx.class_anim_callbacks[prop] = _on_done
+        anim_obj.anim.finished.connect(_on_done)
+
+    def _wire_clicked_anim_callback(self, widget: QWidget, ctx: WidgetContext, prop: str, anim_obj: Animation) -> None:
+        """Register a finished-signal callback that deactivates :clicked once all forward-phase animations complete."""
+        gen = ctx.clicked_anim_gen
+        wid = id(widget)
+        old_cb = ctx.clicked_anim_callbacks.pop(prop, None)
+        if old_cb is not None:
+            try:
+                anim_obj.anim.finished.disconnect(old_cb)
+            except RuntimeError, TypeError:
+                pass
+
+        def _on_done(_w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen) -> None:
+            c = self._contexts.get(_wid)
+            if c and _gen == c.clicked_anim_gen and _p in c.clicked_anim_props:
+                c.clicked_anim_props.discard(_p)
+                if not c.clicked_anim_props:
+                    self._deactivate_clicked(_w, _wid, _gen)
+
+        ctx.clicked_anim_callbacks[prop] = _on_done
+        anim_obj.anim.finished.connect(_on_done)
 
     def _resolve_target_raw(
         self,
