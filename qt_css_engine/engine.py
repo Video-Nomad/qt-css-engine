@@ -24,6 +24,7 @@ from .utils import (
     parse_css_numeric,
     parse_css_val,
     scoped_anim_style,
+    update_shadow_ancestor,
 )
 
 if TYPE_CHECKING:
@@ -240,6 +241,7 @@ class TransitionEngine(QObject):
             if ctx.internal_write_depth == 0:
                 ctx.internal_write_reason = None
         widget.update()
+        update_shadow_ancestor(widget)
         # Fresh generation — stale finished callbacks from prior class changes become no-ops.
         ctx.class_anim_gen += 1
         ctx.class_anim_props.clear()
@@ -613,6 +615,7 @@ class TransitionEngine(QObject):
         if needs_style_update:
             event_logger.debug("Updating style: %s", widget)
             widget.setStyleSheet(scoped_anim_style(widget, ctx.css_anim_props))
+            update_shadow_ancestor(widget)
         self._apply_cursor(widget, ctx, target_props)
 
     def _collect_rule_state(

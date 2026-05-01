@@ -461,3 +461,21 @@ def get_preferred_size_fallback(widget: QWidget, base_props: dict[str, str], pro
     hint = widget.sizeHint()
     px = hint.width() if "width" in prop else hint.height()
     return f"{max(0, content_box_px(widget, base_props, prop, px))}px"
+
+
+def update_shadow_ancestor(widget: QWidget) -> None:
+    """Force a full repaint on the nearest ancestor with a QGraphicsEffect.
+
+    When a child's inline stylesheet changes during animation, Qt propagates a dirty
+    region equal to the child's bounding rect. A QGraphicsDropShadowEffect on an
+    ancestor casts shadow pixels *outside* that rect (offset + blur), so those pixels
+    are never cleared and appear as residual outlines. Calling update() on the
+    effect-bearing ancestor invalidates its full offscreen pixmap and forces a clean
+    re-render including the shadow region.
+    """
+    w = widget.parentWidget()
+    while w is not None:
+        if w.graphicsEffect() is not None:
+            w.update()
+            return
+        w = w.parentWidget()

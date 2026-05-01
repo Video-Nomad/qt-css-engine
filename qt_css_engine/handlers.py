@@ -16,6 +16,7 @@ from .utils import (
     parse_css_val,
     scoped_anim_style,
     shadow_as_transparent,
+    update_shadow_ancestor,
 )
 
 
@@ -187,6 +188,7 @@ class ColorAnimation(QObject):
         props = self._props
         props[self.prop] = self.current_color.name(QColor.NameFormat.HexArgb)
         self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+        update_shadow_ancestor(self.widget)
 
     def update_spec(self, duration_ms: int, easing_curve: QEasingCurve) -> None:
         """Update duration and easing curve without restarting the animation."""
@@ -303,6 +305,7 @@ class GenericPropertyAnimation(QObject):
         props = self._props
         props[self.prop] = f"{written:.3f}{self.unit}"
         self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+        update_shadow_ancestor(self.widget)
 
     def _on_finished(self) -> None:
         """Remove the inline size constraint when targeting the natural layout size."""
@@ -314,6 +317,7 @@ class GenericPropertyAnimation(QObject):
             del props[self.prop]
             try:
                 self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+                update_shadow_ancestor(self.widget)
             except RuntimeError:
                 pass
 
