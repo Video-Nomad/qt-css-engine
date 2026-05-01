@@ -2865,3 +2865,21 @@ def test_reload_removes_opacity_when_rule_dropped(_app: QApplication, qtbot: QtB
     assert not _has_anim(engine, widget, "opacity")
     assert widget.graphicsEffect() is None
     destroy(widget)
+
+
+def test_reload_removes_box_shadow_when_rule_dropped(_app: QApplication, qtbot: QtBot) -> None:
+    """Reload that removes the box-shadow rule must tear down the QGraphicsDropShadowEffect."""
+    engine = make_engine(".box { box-shadow: 0 4px 8px rgba(0,0,0,0.5); }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    assert isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect)
+
+    _, new_rules = extract_rules(".box { background-color: red; }")
+    engine.reload_rules(new_rules)
+    qtbot.wait(20)
+
+    assert not _has_anim(engine, widget, "box-shadow")
+    assert widget.graphicsEffect() is None
+    destroy(widget)
+
