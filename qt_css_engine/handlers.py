@@ -1,4 +1,4 @@
-from qt_css_engine.constants import NON_NEGATIVE_PROPS
+from qt_css_engine.constants import NON_NEGATIVE_PROPS, SIZE_PROPS
 
 from .qt_compat import is_qobject_alive
 from .qt_compat.QtCore import QEasingCurve, QObject, QVariantAnimation
@@ -188,7 +188,8 @@ class ColorAnimation(QObject):
         props = self._props
         props[self.prop] = self.current_color.name(QColor.NameFormat.HexArgb)
         self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
-        update_shadow_ancestor(self.widget)
+        if self.start_color.alpha() != 255 or self.end_color.alpha() != 255:
+            update_shadow_ancestor(self.widget)
 
     def update_spec(self, duration_ms: int, easing_curve: QEasingCurve) -> None:
         """Update duration and easing curve without restarting the animation."""
@@ -305,7 +306,8 @@ class GenericPropertyAnimation(QObject):
         props = self._props
         props[self.prop] = f"{written:.3f}{self.unit}"
         self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
-        update_shadow_ancestor(self.widget)
+        if self.prop in SIZE_PROPS:
+            update_shadow_ancestor(self.widget)
 
     def _on_finished(self) -> None:
         """Remove the inline size constraint when targeting the natural layout size."""
