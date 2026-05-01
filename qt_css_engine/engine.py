@@ -866,8 +866,13 @@ class TransitionEngine(QObject):
 
         # Negative transition-delay: start immediately but seek |delay| ms into the timeline,
         # as if the animation had already been running that long (CSS spec §transition-delay).
-        # Only on fresh starts; re-targeting a running animation skips this.
-        if not is_running and trans.delay_ms < 0:
+        # Only on fresh starts where set_target actually launched the animation.
+        # set_target() is a no-op when target == current — animation stays Stopped in that case
+        # (e.g. CLASS_ANIMATION_FINISH re-eval after reverse trip).  Qt's setCurrentTime() calls
+        # updateCurrentTime() unconditionally and emits valueChanged even on a Stopped animation,
+        # so calling it after a no-op set_target would corrupt css_anim_props with a stale
+        # intermediate color and leave the widget visually stuck between states.
+        if not is_running and trans.delay_ms < 0 and anim_obj.anim.state() == QAbstractAnimation.State.Running:
             anim_obj.anim.setCurrentTime(min(-trans.delay_ms, trans.duration_ms))
 
         if cause.is_class_driven and anim_obj.anim.state() == QAbstractAnimation.State.Running:
