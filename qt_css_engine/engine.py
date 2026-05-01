@@ -1065,6 +1065,10 @@ class TransitionEngine(QObject):
             for anim_obj in ctx.active_animations.values():
                 try:
                     anim_obj.anim.stop()
+                    if isinstance(anim_obj, BoxShadowHandle):
+                        apply_shadow_to_widget(anim_obj.widget, None, self.effect_priority)
+                    elif isinstance(anim_obj, OpacityAnimation):
+                        anim_obj.widget.setGraphicsEffect(None)
                     anim_obj.deleteLater()
                 except RuntimeError:
                     pass
