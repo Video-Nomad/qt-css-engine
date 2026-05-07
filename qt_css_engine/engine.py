@@ -4,12 +4,21 @@ import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from .constants import CURSOR_MAP, EASING_MAP, EFFECT_PROPS, PSEUDO_EVENTS, SIZE_PROPS, SUPPORTED_NUMERIC_PROPS
+from .constants import (
+    CURSOR_MAP,
+    EASING_MAP,
+    EFFECT_PROPS,
+    NON_NEGATIVE_PROPS,
+    PSEUDO_EVENTS,
+    SIZE_PROPS,
+    SUPPORTED_NUMERIC_PROPS,
+)
 from .handlers import (
     BoxShadowHandle,
     ColorAnimation,
     GenericPropertyAnimation,
     OpacityAnimation,
+    clamp_border_radius,
 )
 from .qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, Qt, QTimer
 from .qt_compat.QtGui import QMouseEvent
@@ -594,10 +603,14 @@ class TransitionEngine(QObject):
         # stripped from pseudo-state blocks in the cleaned QSS, not from the base block).
         # Effect props (opacity, box-shadow) need their QGraphicsEffect initialised even at
         # base state — but only when this specific widget actually matches an effect rule.
+        # Transitioned props also need evaluation here: cleaned QSS may strip them from the
+        # matched rule set, including non-pseudo class-selected startup states.
         if cause.snaps_transitions and not ctx.css_anim_props and not ctx.active_animations:
             matching = self._matching_rules(widget)
-            if not any(p in EFFECT_PROPS for r in matching for p in r.properties) and not any(
-                "cursor" in r.properties for r in matching
+            if (
+                not any(r.transitions for r in matching)
+                and not any(p in EFFECT_PROPS for r in matching for p in r.properties)
+                and not any("cursor" in r.properties for r in matching)
             ):
                 return
         (
@@ -729,14 +742,14 @@ class TransitionEngine(QObject):
                 and target_raw == base_props.get(prop)
             ):
                 return self._unfreeze(ctx, prop, frozen)
-            return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target)
+            return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target, target_props)
 
         trans = target_transitions[prop]
         if trans.duration_ms == 0 or not self.animations_enabled or cause.snaps_transitions:
-            return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target)
+            return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target, target_props)
 
         return self._start_or_retarget_anim(
-            widget, ctx, prop, anim_obj, base_props, base_raw, target_raw, is_natural_target, trans, cause
+            widget, ctx, prop, anim_obj, base_props, target_props, base_raw, target_raw, is_natural_target, trans, cause
         )
 
     @staticmethod
@@ -822,6 +835,7 @@ class TransitionEngine(QObject):
         prop: str,
         anim_obj: Animation | None,
         base_props: dict[str, str],
+        target_props: dict[str, str],
         base_raw: str,
         target_raw: str,
         is_natural_target: bool,
@@ -845,7 +859,7 @@ class TransitionEngine(QObject):
                 return prop not in EFFECT_PROPS  # needs setStyleSheet iff we wrote css_anim_props
             if anim_obj is None:
                 current_raw = self._resolve_current_raw(widget, ctx, prop, base_props, base_raw)
-                anim_obj = self._create_animation_obj(widget, prop, current_raw, trans.duration_ms, curve)
+                anim_obj = self._create_animation_obj(widget, prop, current_raw, trans.duration_ms, curve, base_props)
                 if anim_obj:
                     self._register_animation(widget, ctx, prop, anim_obj)
             else:
@@ -860,8 +874,11 @@ class TransitionEngine(QObject):
             return False
 
         if is_natural_target and isinstance(anim_obj, GenericPropertyAnimation):
+            anim_obj.update_box_props(target_props)
             anim_obj.set_target(target_raw, clean_on_finish=True)
         else:
+            if isinstance(anim_obj, GenericPropertyAnimation):
+                anim_obj.update_box_props(target_props)
             anim_obj.set_target(target_raw)
 
         # Negative transition-delay: start immediately but seek |delay| ms into the timeline,
@@ -1289,16 +1306,19 @@ class TransitionEngine(QObject):
         anim_obj: Animation | None,
         target_raw: str,
         is_natural_target: bool,
+        target_props: dict[str, str],
     ) -> bool:
         """Snap a property to its target value instantly. Returns True if a batched style update is needed."""
         if anim_obj:
             if is_natural_target and isinstance(anim_obj, GenericPropertyAnimation):
                 anim_obj.snap_to_natural()
             else:
+                if isinstance(anim_obj, GenericPropertyAnimation):
+                    anim_obj.update_box_props(target_props)
                 anim_obj.snap_to(target_raw)
             return not isinstance(anim_obj, (OpacityAnimation, BoxShadowHandle))
         if prop in EFFECT_PROPS:
-            new_anim = self._create_animation_obj(widget, prop, target_raw, 0, QEasingCurve.Type.Linear)
+            new_anim = self._create_animation_obj(widget, prop, target_raw, 0, QEasingCurve.Type.Linear, target_props)
             if new_anim:
                 self._register_animation(widget, ctx, prop, new_anim)
             return False
@@ -1307,6 +1327,13 @@ class TransitionEngine(QObject):
             if prop in ctx.css_anim_props:
                 del ctx.css_anim_props[prop]
             return True
+        parsed = parse_css_numeric(target_raw)
+        if parsed is not None:
+            value, unit = parsed
+            clamped = clamp_border_radius(widget, prop, max(0.0, value), unit, target_props)
+            if clamped != value and prop in NON_NEGATIVE_PROPS:
+                ctx.css_anim_props[prop] = f"{clamped:.3f}{unit}"
+                return True
         ctx.css_anim_props[prop] = target_raw
         return True
 
@@ -1364,6 +1391,7 @@ class TransitionEngine(QObject):
         initial_raw: str,
         duration_ms: int,
         curve: QEasingCurve | QEasingCurve.Type,
+        box_props: dict[str, str] | None = None,
     ) -> Animation | None:
         """Instantiate the correct Animation subclass for a CSS property."""
         ctx = self._ctx(widget)
@@ -1384,5 +1412,7 @@ class TransitionEngine(QObject):
             parsed = parse_css_numeric(initial_raw)
             if parsed is not None:
                 start_val, unit = parsed
-                return GenericPropertyAnimation(widget, prop, start_val, duration_ms, curve, self, unit=unit, ctx=ctx)
+                return GenericPropertyAnimation(
+                    widget, prop, start_val, duration_ms, curve, self, unit=unit, ctx=ctx, box_props=box_props
+                )
         return None

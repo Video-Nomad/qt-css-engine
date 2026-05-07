@@ -144,6 +144,17 @@ NON_NEGATIVE_PROPS: frozenset[str] = frozenset(
     }
 )
 
+
+BORDER_RADIUS_PROPS: frozenset[str] = frozenset(
+    {
+        "border-radius",
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    }
+)
+
 # ---------------------------------------------------------------------------
 # Cursor map
 # ---------------------------------------------------------------------------
