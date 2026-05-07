@@ -30,7 +30,7 @@ from qt_css_engine import TransitionEngine
 from qt_css_engine.css_parser import extract_rules
 from qt_css_engine.handlers import ColorAnimation, GenericPropertyAnimation
 from qt_css_engine.qt_compat import qt_delete
-from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QSize, Qt
+from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QSize, Qt, QTimer
 from qt_css_engine.qt_compat.QtGui import QColor
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QFrame, QPushButton, QVBoxLayout, QWidget
 from qt_css_engine.types import Animation, EvaluationCause
@@ -650,6 +650,173 @@ def test_border_radius_zero_duration_snap_clamped_to_half_min_side(_app: QApplic
     ):
         assert ctx.css_anim_props.get(corner) == "5.000px", f"{corner} should clamp to half of min side"
     destroy(widget)
+
+
+def test_static_border_radius_oversize_clamped_without_animation(_app: QApplication) -> None:
+    engine = make_engine("""
+        .box { border-radius: 999px; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    widget.resize(20, 10)
+
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+
+    ctx = engine._ctx(widget)
+    assert not ctx.active_animations
+    for corner in (
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ):
+        assert ctx.css_anim_props.get(corner) == "5.000px", f"{corner} should clamp without creating an animation"
+    destroy(widget)
+
+
+def test_static_border_radius_safe_value_stays_native_qss(_app: QApplication) -> None:
+    engine = make_engine("""
+        .box { border-radius: 4px; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    widget.resize(20, 10)
+
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+
+    ctx = engine._ctx(widget)
+    assert not ctx.active_animations
+    assert ctx.css_anim_props == {}
+    destroy(widget)
+
+
+def test_reload_adds_static_border_radius_clamp_without_prior_engine_state(_app: QApplication, qtbot: QtBot) -> None:
+    engine = make_engine("""
+        .box { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    widget.resize(20, 10)
+
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    assert id(widget) not in engine._contexts
+
+    _, new_rules = extract_rules("""
+        .box { background-color: red; border-radius: 999px; }
+    """)
+    engine.reload_rules(new_rules)
+    qtbot.wait(20)
+
+    ctx = engine._ctx(widget)
+    assert not ctx.active_animations
+    for corner in (
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ):
+        assert ctx.css_anim_props.get(corner) == "5.000px", f"{corner} should clamp after reload"
+    destroy(widget)
+
+
+def test_reload_removes_static_border_radius_clamp_when_value_becomes_safe(_app: QApplication, qtbot: QtBot) -> None:
+    engine = make_engine("""
+        .box { border-radius: 999px; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    widget.resize(20, 10)
+
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    assert engine._ctx(widget).css_anim_props
+
+    _, new_rules = extract_rules("""
+        .box { border-radius: 4px; }
+    """)
+    engine.reload_rules(new_rules)
+    qtbot.wait(20)
+
+    ctx = engine._ctx(widget)
+    assert not ctx.active_animations
+    assert ctx.css_anim_props == {}
+    destroy(widget)
+
+
+def test_reload_static_border_radius_rechecks_after_geometry_settles(_app: QApplication, qtbot: QtBot) -> None:
+    engine = make_engine("""
+        .box { background-color: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    widget.resize(0, 0)
+
+    _, new_rules = extract_rules("""
+        .box { background-color: red; border-radius: 999px; }
+    """)
+    engine.reload_rules(new_rules)
+    QTimer.singleShot(0, lambda: widget.resize(20, 10))
+    qtbot.wait(20)
+
+    ctx = engine._ctx(widget)
+    assert not ctx.active_animations
+    for corner in (
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ):
+        assert ctx.css_anim_props.get(corner) == "5.000px", f"{corner} should clamp after geometry settles"
+    destroy(widget)
+
+
+def test_reload_transition_all_border_radius_clamps_without_removing_transition(
+    _app: QApplication, qtbot: QtBot
+) -> None:
+    engine = make_engine("""
+        .taskbar-widget .app-container {
+            margin: 2px 2px;
+            border-radius: 4px;
+            padding: 0 4px;
+            background: transparent;
+            transition: all 0.16s ease;
+        }
+
+        .taskbar-widget .app-container:hover {
+            background: gray;
+        }
+    """)
+    parent = QWidget()
+    parent.setProperty("class", "taskbar-widget")
+    widget = QWidget(parent)
+    widget.setProperty("class", "app-container")
+    widget.resize(40, 20)
+
+    _, new_rules = extract_rules("""
+        .taskbar-widget .app-container {
+            margin: 2px 2px;
+            border-radius: 999px;
+            padding: 0 4px;
+            background: transparent;
+            transition: all 0.16s ease;
+        }
+
+        .taskbar-widget .app-container:hover {
+            background: gray;
+        }
+    """)
+    engine.reload_rules(new_rules)
+    qtbot.wait(20)
+
+    ctx = engine._ctx(widget)
+    for corner in (
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ):
+        assert corner not in ctx.active_animations
+        assert ctx.css_anim_props.get(corner) == "8.000px", f"{corner} should clamp on reload with transition: all"
+    destroy(parent)
 
 
 def test_border_radius_initial_polish_uses_size_hint_when_geometry_unset(_app: QApplication) -> None:

@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from .constants import (
+    BORDER_RADIUS_PROPS,
     CURSOR_MAP,
     EASING_MAP,
     EFFECT_PROPS,
@@ -109,6 +110,8 @@ class TransitionEngine(QObject):
         self._animated_ids: set[str] = set()
         # True if any rule uses effect props (opacity, box-shadow) — these need engine init at base state
         self._has_effect_rules: bool = False
+        # True if any rule declares border-radius — oversized values need one snap pass even without transitions.
+        self._has_border_radius_rules: bool = False
         # True if any rule declares a cursor — Qt QSS ignores cursor, so the engine must apply it.
         self._has_cursor_rules: bool = False
         # Enable event logging if the CSS_ENGINE_EVENT_LOGGING env var is set.
@@ -411,6 +414,7 @@ class TransitionEngine(QObject):
         self._animated_classes.clear()
         self._animated_ids.clear()
         self._has_effect_rules = False
+        self._has_border_radius_rules = False
         self._has_cursor_rules = False
 
         for rule in self.rules:
@@ -418,10 +422,13 @@ class TransitionEngine(QObject):
                 continue
             has_effect_props = any(p in EFFECT_PROPS for p in rule.properties)
             has_cursor_props = "cursor" in rule.properties
-            if not rule.transitions and not has_effect_props and not has_cursor_props:
+            has_border_radius_props = any(p in BORDER_RADIUS_PROPS for p in rule.properties)
+            if not rule.transitions and not has_effect_props and not has_cursor_props and not has_border_radius_props:
                 continue
             if has_effect_props or any(t.prop in ("opacity", "all") for t in rule.transitions):
                 self._has_effect_rules = True
+            if has_border_radius_props:
+                self._has_border_radius_rules = True
             if has_cursor_props:
                 self._has_cursor_rules = True
             last_segment = rule.segments[-1]
@@ -611,6 +618,7 @@ class TransitionEngine(QObject):
                 not any(r.transitions for r in matching)
                 and not any(p in EFFECT_PROPS for r in matching for p in r.properties)
                 and not any("cursor" in r.properties for r in matching)
+                and not any(p in BORDER_RADIUS_PROPS for r in matching for p in r.properties)
             ):
                 return
         (
@@ -680,7 +688,22 @@ class TransitionEngine(QObject):
         for p in EFFECT_PROPS:
             if p in base_props or p in target_props:
                 all_animated_props.add(p)
+        # Static border-radius normally stays native QSS. Route only values that hit
+        # Qt's oversized-radius snap bug, plus existing inline clamps that need refresh.
+        for p in BORDER_RADIUS_PROPS:
+            if p in target_props and (
+                self._needs_qt_border_radius_clamp(widget, target_props, p) or p in ctx.css_anim_props
+            ):
+                all_animated_props.add(p)
         return base_props, target_props, target_transitions, all_animated_props
+
+    def _needs_qt_border_radius_clamp(self, widget: QWidget, target_props: dict[str, str], prop: str) -> bool:
+        raw = target_props.get(prop)
+        parsed = parse_css_numeric(raw)
+        if parsed is None:
+            return False
+        value, unit = parsed
+        return clamp_border_radius(widget, prop, max(0.0, value), unit, target_props) != value
 
     def _apply_prop_animation(
         self,
@@ -740,12 +763,22 @@ class TransitionEngine(QObject):
                 and not anim_obj
                 and (prop not in ctx.css_anim_props or frozen)
                 and target_raw == base_props.get(prop)
+                and not self._needs_qt_border_radius_clamp(widget, target_props, prop)
             ):
                 return self._unfreeze(ctx, prop, frozen)
             return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target, target_props)
 
         trans = target_transitions[prop]
-        if trans.duration_ms == 0 or not self.animations_enabled or cause.snaps_transitions:
+        if (
+            trans.duration_ms == 0
+            or not self.animations_enabled
+            or cause.snaps_transitions
+            or (
+                cause is EvaluationCause.RULE_RELOAD
+                and prop in BORDER_RADIUS_PROPS
+                and self._needs_qt_border_radius_clamp(widget, target_props, prop)
+            )
+        ):
             return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target, target_props)
 
         return self._start_or_retarget_anim(
@@ -1135,14 +1168,16 @@ class TransitionEngine(QObject):
         # Effect-only widgets (box-shadow / opacity with no inline animation) have no inline
         # stylesheet, so widget.setStyleSheet("") above was a no-op for them. If the cleaned
         # QSS is unchanged Qt won't send a Polish event, and the engine would never re-evaluate
-        # them. Defer a targeted pass.
+        # them. Static oversized border-radius rules have the same "new engine-managed state"
+        # problem when a reload introduces them to a widget that had no previous engine state.
+        # Defer a targeted pass after the caller has a chance to apply the new app stylesheet.
         effect_only_widgets = {w for w in animated_widgets if id(w) not in inline_widget_ids}
         prev_animated_ids = {id(w) for w in animated_widgets}
 
-        QTimer.singleShot(0, lambda: self._reeval_effect_widgets_deferred(effect_only_widgets, prev_animated_ids))
+        QTimer.singleShot(0, lambda: self._reeval_reload_widgets_deferred(effect_only_widgets, prev_animated_ids))
 
-    def _reeval_effect_widgets_deferred(self, effect_only_widgets: set[QWidget], prev_animated_ids: set[int]) -> None:
-        """Re-evaluate effect-only widgets after a hot-reload stylesheet change."""
+    def _reeval_reload_widgets_deferred(self, effect_only_widgets: set[QWidget], prev_animated_ids: set[int]) -> None:
+        """Re-evaluate widgets that need engine-managed state after a hot-reload stylesheet change."""
         for widget in effect_only_widgets:
             try:
                 widget.objectName()
@@ -1155,7 +1190,7 @@ class TransitionEngine(QObject):
                     widget.setGraphicsEffect(None)
             except RuntimeError:
                 pass
-        if not self._has_effect_rules:
+        if not self._has_effect_rules and not self._has_border_radius_rules:
             return
         app = QApplication.instance()
         if not isinstance(app, QApplication):
@@ -1168,6 +1203,29 @@ class TransitionEngine(QObject):
                 continue
             if self._should_evaluate(widget):
                 self._evaluate_widget_state(widget, cause=EvaluationCause.RULE_RELOAD)
+        if self._has_border_radius_rules:
+            QTimer.singleShot(0, self._reeval_border_radius_widgets_after_reload)
+
+    def _reeval_border_radius_widgets_after_reload(self) -> None:
+        """Re-evaluate border-radius widgets after reload Polish/layout has had one more event-loop turn."""
+        if not self._has_border_radius_rules:
+            return
+        app = QApplication.instance()
+        if not isinstance(app, QApplication):
+            return
+        for widget in app.allWidgets():
+            try:
+                widget.objectName()
+                if not self._should_evaluate(widget):
+                    continue
+                if not any(p in BORDER_RADIUS_PROPS for rule in self._matching_rules(widget) for p in rule.properties):
+                    continue
+                ctx = self._contexts.get(id(widget))
+                if ctx is not None and ctx.active_animations:
+                    continue
+                self._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+            except RuntimeError:
+                pass
 
     # -------------------------------------------------------------------------
     # Animation helpers
