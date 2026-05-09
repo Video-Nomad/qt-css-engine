@@ -64,6 +64,17 @@ PSEUDO_EVENTS: frozenset[QEvent.Type] = frozenset(
     }
 )
 
+ENGINE_EVENT_TYPES: frozenset[QEvent.Type] = PSEUDO_EVENTS | frozenset(
+    {
+        QEvent.Type.Polish,
+        QEvent.Type.DynamicPropertyChange,
+        QEvent.Type.WindowActivate,
+        QEvent.Type.WindowDeactivate,
+        QEvent.Type.Leave,
+    }
+)
+
+
 EASING_MAP: dict[str, QEasingCurve.Type] = {
     "linear": QEasingCurve.Type.Linear,
     "ease": QEasingCurve.Type.InOutQuad,

@@ -21,6 +21,7 @@ Focus areas:
 - _fire_delayed_prop no-op when prop absent from rules
 - double HoverEnter is a no-op (same pseudo set)
 - eventFilter ignores non-QWidget objects
+- eventFilter ignores unhandled widget event types
 """
 
 import pytest
@@ -1063,3 +1064,16 @@ def test_event_filter_ignores_non_qwidget(_app: QApplication) -> None:
     non_widget = QObject()
     result = engine.eventFilter(non_widget, QEvent(QEvent.Type.Polish))
     assert result is False
+
+
+def test_event_filter_ignores_unhandled_widget_event_type(_app: QApplication) -> None:
+    """Unhandled widget events like Paint must not allocate per-widget engine state."""
+    engine = make_engine(".box:hover { background-color: red; transition: background-color 300ms; }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+
+    result = engine.eventFilter(widget, QEvent(QEvent.Type.Paint))
+
+    assert result is False
+    assert id(widget) not in engine._contexts
+    destroy(widget)

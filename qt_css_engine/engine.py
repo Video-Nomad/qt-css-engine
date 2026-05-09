@@ -9,6 +9,7 @@ from .constants import (
     CURSOR_MAP,
     EASING_MAP,
     EFFECT_PROPS,
+    ENGINE_EVENT_TYPES,
     NON_NEGATIVE_PROPS,
     PSEUDO_EVENTS,
     SIZE_PROPS,
@@ -152,9 +153,11 @@ class TransitionEngine(QObject):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # type: ignore
         """Intercept widget events to track pseudo-states and trigger CSS transitions."""
+        t = event.type()
+        if t not in ENGINE_EVENT_TYPES:
+            return False
         if not isinstance(watched, QWidget):
             return False
-        t = event.type()
         if t == QEvent.Type.Polish:
             self._on_polish(watched)
         elif t == QEvent.Type.DynamicPropertyChange:
