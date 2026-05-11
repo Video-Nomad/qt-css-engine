@@ -1,4 +1,6 @@
-from qt_css_engine.constants import NON_NEGATIVE_PROPS
+import math
+
+from qt_css_engine.constants import BORDER_RADIUS_PROPS, NON_NEGATIVE_PROPS, SIZE_PROPS
 
 from .qt_compat import is_qobject_alive
 from .qt_compat.QtCore import QEasingCurve, QObject, QVariantAnimation
@@ -10,13 +12,46 @@ from .utils import (
     apply_shadow_to_widget,
     interpolate_oklab,
     lerp_shadow,
+    margin_side_px,
     parse_box_shadow,
     parse_color,
     parse_css_numeric,
     parse_css_val,
     scoped_anim_style,
     shadow_as_transparent,
+    update_shadow_ancestor,
 )
+
+
+def clamp_border_radius(
+    widget: QWidget,
+    prop: str,
+    value: float,
+    unit: str,
+    box_props: dict[str, str] | None = None,
+) -> float:
+    """
+    Clamp pixel border-radius values to Qt's maximum supported corner radius.
+
+    Qt snaps radii above half of the painted border rect's smaller side back to square corners.
+    QSS margin sits outside that painted rect, while padding and border stay inside it.
+    """
+    if unit != "px" or prop not in BORDER_RADIUS_PROPS:
+        return value
+    props = box_props or {}
+    width = widget.width()
+    height = widget.height()
+    if width <= 0 or height <= 0:
+        hint = widget.sizeHint()
+        if width <= 0:
+            width = hint.width()
+        if height <= 0:
+            height = hint.height()
+    width -= margin_side_px(props, "left") + margin_side_px(props, "right")
+    height -= margin_side_px(props, "top") + margin_side_px(props, "bottom")
+    if width <= 0 or height <= 0:
+        return value
+    return math.floor(min(value, min(width, height) / 2.0))
 
 
 class BoxShadowHandle(QObject):
@@ -187,6 +222,8 @@ class ColorAnimation(QObject):
         props = self._props
         props[self.prop] = self.current_color.name(QColor.NameFormat.HexArgb)
         self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+        if self.start_color.alpha() != 255 or self.end_color.alpha() != 255:
+            update_shadow_ancestor(self.widget)
 
     def update_spec(self, duration_ms: int, easing_curve: QEasingCurve) -> None:
         """Update duration and easing curve without restarting the animation."""
@@ -261,19 +298,21 @@ class GenericPropertyAnimation(QObject):
         parent: QObject | None = None,
         unit: str = "px",
         ctx: WidgetContext | None = None,
+        box_props: dict[str, str] | None = None,
     ) -> None:
         super().__init__(parent)
         self.widget = widget
         self.prop = prop
         self.unit = unit
         self._ctx = ctx
-        self.current_val = float(initial_val)
+        self._box_props = dict(box_props or {})
+        self.current_val = self._effective_anim_value(float(initial_val), unit)
         # Captured at creation time (before any inline constraint is applied).
         # Used as the animation target when returning to natural/unconstrained state,
         # so we never call sizeHint() while min-width/max-width are still active.
         self.natural_val: float = float(initial_val)
         self._clean_on_finish = False
-        self._anim_origin_val: float | None = float(initial_val)
+        self._anim_origin_val: float | None = self.current_val
 
         self.anim = QVariantAnimation(self)
         self.anim.setDuration(duration_ms)
@@ -293,16 +332,30 @@ class GenericPropertyAnimation(QObject):
         props: dict[str, str] = getattr(self.widget, "_css_anim_props", {})
         return props
 
+    def _effective_anim_value(self, value: float, unit: str | None = None) -> float:
+        """Normalize values used as animation endpoints/current state for Qt-limited props."""
+        resolved_unit = self.unit if unit is None else unit
+        if self.prop in BORDER_RADIUS_PROPS:
+            return clamp_border_radius(self.widget, self.prop, max(0.0, value), resolved_unit, self._box_props)
+        return value
+
+    def update_box_props(self, box_props: dict[str, str]) -> None:
+        """Update box-model props used for border-radius clamping."""
+        self._box_props = dict(box_props)
+
     def _on_tick(self, val: int | float) -> None:
         """Write interpolated numeric value to css_anim_props and refresh the widget stylesheet."""
         if not is_qobject_alive(self.widget):
             self.anim.stop()
             return
-        self.current_val = float(val)
+        self.current_val = self._effective_anim_value(float(val))
         written = max(0.0, self.current_val) if self.prop in NON_NEGATIVE_PROPS else self.current_val
+        written = clamp_border_radius(self.widget, self.prop, written, self.unit, self._box_props)
         props = self._props
         props[self.prop] = f"{written:.3f}{self.unit}"
         self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+        if self.prop in SIZE_PROPS:
+            update_shadow_ancestor(self.widget)
 
     def _on_finished(self) -> None:
         """Remove the inline size constraint when targeting the natural layout size."""
@@ -314,6 +367,7 @@ class GenericPropertyAnimation(QObject):
             del props[self.prop]
             try:
                 self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+                update_shadow_ancestor(self.widget)
             except RuntimeError:
                 pass
 
@@ -328,9 +382,14 @@ class GenericPropertyAnimation(QObject):
         self._clean_on_finish = False
         parsed = parse_css_numeric(value_raw)
         if parsed is not None:
-            self.current_val = parsed[0]
+            raw_val, unit = parsed
+            self.unit = unit
+            self.current_val = self._effective_anim_value(raw_val, unit)
             self._anim_origin_val = self.current_val
-            self._props[self.prop] = f"{self.current_val:.3f}{self.unit}"
+            written = self.current_val
+            if self.prop in BORDER_RADIUS_PROPS:
+                written = clamp_border_radius(self.widget, self.prop, max(0.0, written), self.unit, self._box_props)
+            self._props[self.prop] = f"{written:.3f}{self.unit}"
 
     def snap_to_natural(self) -> None:
         """Stop animation and remove this prop from css_anim_props (returns widget to natural layout)."""
@@ -345,7 +404,7 @@ class GenericPropertyAnimation(QObject):
         parsed = parse_css_numeric(target_raw)
         if parsed is None:
             return
-        t_val = float(parsed[0])
+        t_val = self._effective_anim_value(float(parsed[0]), parsed[1])
         is_running = self.anim.state() == self.anim.State.Running
         if is_running and t_val == self.anim.endValue():
             return

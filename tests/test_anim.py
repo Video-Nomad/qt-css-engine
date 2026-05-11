@@ -12,15 +12,18 @@ from qt_css_engine.handlers import (
     ColorAnimation,
     GenericPropertyAnimation,
     OpacityAnimation,
+    clamp_border_radius,
 )
 from qt_css_engine.qt_compat import qt_delete
-from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, Qt
+from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QSize, Qt
 from qt_css_engine.qt_compat.QtGui import QColor
 from qt_css_engine.qt_compat.QtWidgets import (
     QApplication,
     QCheckBox,
+    QFrame,
     QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
+    QLabel,
     QWidget,
 )
 from qt_css_engine.types import Animation, EvaluationCause, ShadowParams, WidgetContext
@@ -88,6 +91,13 @@ class TrackedWidget(QWidget):
     def setStyleSheet(self, styleSheet: str | None) -> None:
         self.setStyleSheet_count += 1
         super().setStyleSheet(styleSheet)
+
+
+class FixedHintWidget(QWidget):
+    """Deterministic sizeHint for geometry-free layout regressions."""
+
+    def sizeHint(self) -> QSize:
+        return QSize(20, 10)
 
 
 # ---------------------------------------------------------------------------
@@ -1283,6 +1293,69 @@ def test_generic_property_animation(_app: QApplication) -> None:
     assert anim.current_val == -5.0
     assert ctx.css_anim_props.get("padding-top") == "-5.000px"
 
+    destroy(widget)
+
+
+def test_generic_border_radius_animation_clamped_to_half_min_side(_app: QApplication) -> None:
+    widget = QWidget()
+    widget.resize(20, 10)
+    ctx = WidgetContext()
+    anim = GenericPropertyAnimation(widget, "border-top-left-radius", 0.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
+
+    anim.set_target("20px")
+    assert anim.anim.endValue() == pytest.approx(5.0)
+
+    anim.anim.setCurrentTime(50)
+
+    assert anim.current_val == pytest.approx(2.0)
+    assert ctx.css_anim_props.get("border-top-left-radius") == "2.000px"
+
+    anim.snap_to("20px")
+    assert anim.current_val == pytest.approx(5.0)
+    assert ctx.css_anim_props.get("border-top-left-radius") == "5.000px"
+
+    destroy(widget)
+
+
+def test_generic_border_radius_uses_size_hint_when_geometry_unset(_app: QApplication) -> None:
+    widget = FixedHintWidget()
+    widget.resize(0, 0)
+    ctx = WidgetContext()
+    anim = GenericPropertyAnimation(widget, "border-top-left-radius", 0.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
+
+    anim.set_target("20px")
+
+    assert anim.anim.endValue() == pytest.approx(5.0)
+
+    anim.snap_to("20px")
+    assert anim.current_val == pytest.approx(5.0)
+    assert ctx.css_anim_props.get("border-top-left-radius") == "5.000px"
+
+    destroy(widget)
+
+
+def test_border_radius_clamp_uses_widget_rect_for_qframe(_app: QApplication) -> None:
+    label = QLabel("hello")
+    label.setFrameStyle(QFrame.Shape.Box.value | QFrame.Shadow.Plain.value)
+    label.setLineWidth(2)
+    label.resize(100, 30)
+    label.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    label.show()
+
+    expected = min(label.width(), label.height()) // 2
+    actual = clamp_border_radius(label, "border-top-left-radius", 100.0, "px")
+
+    assert actual == expected
+    destroy(label)
+
+
+def test_border_radius_clamp_subtracts_qss_margin(_app: QApplication) -> None:
+    widget = QWidget()
+    widget.resize(100, 40)
+
+    actual = clamp_border_radius(widget, "border-top-left-radius", 100.0, "px", {"margin": "10px"})
+
+    assert actual == 10
     destroy(widget)
 
 
@@ -2863,5 +2936,22 @@ def test_reload_removes_opacity_when_rule_dropped(_app: QApplication, qtbot: QtB
     qtbot.wait(20)
 
     assert not _has_anim(engine, widget, "opacity")
+    assert widget.graphicsEffect() is None
+    destroy(widget)
+
+
+def test_reload_removes_box_shadow_when_rule_dropped(_app: QApplication, qtbot: QtBot) -> None:
+    """Reload that removes the box-shadow rule must tear down the QGraphicsDropShadowEffect."""
+    engine = make_engine(".box { box-shadow: 0 4px 8px rgba(0,0,0,0.5); }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    assert isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect)
+
+    _, new_rules = extract_rules(".box { background-color: red; }")
+    engine.reload_rules(new_rules)
+    qtbot.wait(20)
+
+    assert not _has_anim(engine, widget, "box-shadow")
     assert widget.graphicsEffect() is None
     destroy(widget)

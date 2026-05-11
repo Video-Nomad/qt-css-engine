@@ -64,6 +64,17 @@ PSEUDO_EVENTS: frozenset[QEvent.Type] = frozenset(
     }
 )
 
+ENGINE_EVENT_TYPES: frozenset[QEvent.Type] = PSEUDO_EVENTS | frozenset(
+    {
+        QEvent.Type.Polish,
+        QEvent.Type.DynamicPropertyChange,
+        QEvent.Type.WindowActivate,
+        QEvent.Type.WindowDeactivate,
+        QEvent.Type.Leave,
+    }
+)
+
+
 EASING_MAP: dict[str, QEasingCurve.Type] = {
     "linear": QEasingCurve.Type.Linear,
     "ease": QEasingCurve.Type.InOutQuad,
@@ -141,6 +152,17 @@ NON_NEGATIVE_PROPS: frozenset[str] = frozenset(
         "font-size",
         "font-weight",
         "spacing",
+    }
+)
+
+
+BORDER_RADIUS_PROPS: frozenset[str] = frozenset(
+    {
+        "border-radius",
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
     }
 )
 
