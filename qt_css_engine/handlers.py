@@ -1,4 +1,5 @@
 import math
+from collections.abc import Callable
 
 from qt_css_engine.constants import BORDER_RADIUS_PROPS, NON_NEGATIVE_PROPS, SIZE_PROPS
 
@@ -283,11 +284,13 @@ class ColorAnimation(QObject):
         easing_curve: QEasingCurve | QEasingCurve.Type,
         parent: QObject | None = None,
         ctx: WidgetContext | None = None,
+        style_flush_callback: Callable[[QWidget, WidgetContext], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.widget = widget
         self.prop = prop
         self._ctx = ctx
+        self._style_flush_callback = style_flush_callback
         self.current_color = parse_color(initial_raw) if isinstance(initial_raw, str) else QColor(initial_raw)
         self.start_color = self.current_color
         self.end_color = self.current_color
@@ -307,17 +310,23 @@ class ColorAnimation(QObject):
         props: dict[str, str] = getattr(self.widget, "_css_anim_props", {})
         return props
 
+    def _request_style_flush(self, props: dict[str, str], *, update_shadow: bool = False) -> None:
+        if self._ctx is not None and self._style_flush_callback is not None:
+            self._style_flush_callback(self.widget, self._ctx)
+            return
+        self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+        if update_shadow:
+            update_shadow_ancestor(self.widget)
+
     def _on_tick(self, t: float) -> None:
-        """Write interpolated color to css_anim_props and refresh the widget stylesheet."""
+        """Write interpolated color to css_anim_props and request a stylesheet refresh."""
         if not is_qobject_alive(self.widget):
             self.anim.stop()
             return
         self.current_color = interpolate_oklab(self.start_color, self.end_color, t)
         props = self._props
         props[self.prop] = self.current_color.name(QColor.NameFormat.HexArgb)
-        self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
-        if self.start_color.alpha() != 255 or self.end_color.alpha() != 255:
-            update_shadow_ancestor(self.widget)
+        self._request_style_flush(props, update_shadow=self.start_color.alpha() != 255 or self.end_color.alpha() != 255)
 
     def update_spec(self, duration_ms: int, easing_curve: QEasingCurve) -> None:
         """Update duration and easing curve without restarting the animation."""
@@ -393,12 +402,14 @@ class GenericPropertyAnimation(QObject):
         unit: str = "px",
         ctx: WidgetContext | None = None,
         box_props: dict[str, str] | None = None,
+        style_flush_callback: Callable[[QWidget, WidgetContext], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.widget = widget
         self.prop = prop
         self.unit = unit
         self._ctx = ctx
+        self._style_flush_callback = style_flush_callback
         self._box_props = dict(box_props or {})
         self.current_val = self._effective_anim_value(float(initial_val), unit)
         self._target_box_size: tuple[float, float] | None = None
@@ -428,6 +439,14 @@ class GenericPropertyAnimation(QObject):
             return self._ctx.css_anim_props
         props: dict[str, str] = getattr(self.widget, "_css_anim_props", {})
         return props
+
+    def _request_style_flush(self, props: dict[str, str], *, update_shadow: bool = False) -> None:
+        if self._ctx is not None and self._style_flush_callback is not None:
+            self._style_flush_callback(self.widget, self._ctx)
+            return
+        self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+        if update_shadow:
+            update_shadow_ancestor(self.widget)
 
     def _effective_anim_value(self, value: float, unit: str | None = None) -> float:
         """Normalize values used as animation endpoints/current state for Qt-limited props."""
@@ -459,8 +478,28 @@ class GenericPropertyAnimation(QObject):
         """Update box-model props used for border-radius clamping."""
         self._box_props = dict(box_props)
 
+    def _write_current_style_value_if_needed(self, target_raw: str, box_size: tuple[float, float] | None) -> None:
+        props = self._props
+        parsed_target = parse_css_numeric(target_raw)
+        target_needs_clamp = False
+        if parsed_target is not None and self.prop in BORDER_RADIUS_PROPS:
+            target_val, target_unit = parsed_target
+            target_needs_clamp = self._effective_target_value(target_val, target_unit, box_size) != target_val
+
+        written = max(0.0, self.current_val) if self.prop in NON_NEGATIVE_PROPS else self.current_val
+        written = clamp_border_radius(self.widget, self.prop, written, self.unit, self._box_props, box_size)
+        current_raw = props.get(self.prop)
+        current_parsed = parse_css_numeric(current_raw)
+        stored_matches = (
+            current_parsed is not None and current_parsed[1] == self.unit and abs(current_parsed[0] - written) < 1e-6
+        )
+        if stored_matches or (current_raw is None and not target_needs_clamp):
+            return
+        props[self.prop] = f"{written:.3f}{self.unit}"
+        self._request_style_flush(props, update_shadow=self.prop in SIZE_PROPS)
+
     def _on_tick(self, val: int | float | None) -> None:
-        """Write interpolated numeric value to css_anim_props and refresh the widget stylesheet."""
+        """Write interpolated numeric value to css_anim_props and request a stylesheet refresh."""
         if not is_qobject_alive(self.widget):
             self.anim.stop()
             return
@@ -482,9 +521,7 @@ class GenericPropertyAnimation(QObject):
         written = clamp_border_radius(self.widget, self.prop, written, self.unit, self._box_props, final_box_size)
         props = self._props
         props[self.prop] = f"{written:.3f}{self.unit}"
-        self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
-        if self.prop in SIZE_PROPS:
-            update_shadow_ancestor(self.widget)
+        self._request_style_flush(props, update_shadow=self.prop in SIZE_PROPS)
 
     def _on_finished(self) -> None:
         """Remove the inline size constraint when targeting the natural layout size."""
@@ -501,8 +538,7 @@ class GenericPropertyAnimation(QObject):
         if self.prop in props:
             del props[self.prop]
             try:
-                self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
-                update_shadow_ancestor(self.widget)
+                self._request_style_flush(props, update_shadow=True)
             except RuntimeError:
                 pass
 
@@ -558,6 +594,8 @@ class GenericPropertyAnimation(QObject):
         if is_running and t_val == self.anim.endValue():
             return
         if not is_running and abs(t_val - self.current_val) < 1e-6:
+            self._target_box_size = box_size
+            self._write_current_style_value_if_needed(target_raw, box_size)
             return
 
         self._target_box_size = box_size
@@ -584,9 +622,9 @@ class GenericPropertyAnimation(QObject):
         self.anim.setStartValue(self.current_val)
         self.anim.setEndValue(t_val)
         self.anim.start()
-        # Explicitly tick so the initial value is immediately written to the scoped stylesheet
-        # TODO: test if needed
-        # self._on_tick(self.current_val)
+        # Force the start frame into the scoped stylesheet immediately. Qt may defer the
+        # first valueChanged tick, which lets freshly polished class styles flash through.
+        self._on_tick(self.current_val)
 
 
 class OpacityAnimation(QObject):

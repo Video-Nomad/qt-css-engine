@@ -429,6 +429,49 @@ def test_transition_all_return_trip_engine_managed_props(_app: QApplication) -> 
     destroy(widget)
 
 
+def test_class_change_initial_tick_flushes_inline_style_immediately(_app: QApplication) -> None:
+    engine = make_engine("""
+        .box { background-color: red; transition: background-color 300ms; }
+        .box.on { background-color: blue; }
+    """)
+    widget = TrackedWidget()
+    widget.setProperty("class", "box on")
+    ctx = engine._ctx(widget)
+    ctx.css_anim_props["background-color"] = "red"
+
+    count_before = widget.setStyleSheet_count
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.CLASS_CHANGE)
+
+    assert widget.setStyleSheet_count > count_before
+    assert not ctx.style_flush_pending
+    assert ctx.css_anim_props["background-color"] == QColor("red").name(QColor.NameFormat.HexArgb)
+    destroy(widget)
+
+
+def test_class_change_numeric_initial_tick_flushes_start_size_immediately(_app: QApplication) -> None:
+    engine = make_engine("""
+        .box { width: 22px; transition: width 300ms; }
+        .box.focused { width: 50px; }
+    """)
+    widget = TrackedWidget()
+    widget.setProperty("class", "box")
+    widget.resize(22, 22)
+    ctx = engine._ctx(widget)
+
+    widget.setProperty("class", "box focused")
+    count_before = widget.setStyleSheet_count
+    engine._on_class_change(widget)
+
+    assert widget.setStyleSheet_count > count_before
+    assert not ctx.style_flush_pending
+    anim = _get_anim(engine, widget, "width")
+    assert isinstance(anim, GenericPropertyAnimation)
+    assert ctx.css_anim_props["width"] == f"{float(anim.anim.startValue()):.3f}px"
+    assert anim.anim.state() == QAbstractAnimation.State.Running
+    assert anim.anim.endValue() == pytest.approx(50.0)
+    destroy(widget)
+
+
 # ---------------------------------------------------------------------------
 # :focus animation end-to-end
 # ---------------------------------------------------------------------------
@@ -636,6 +679,98 @@ def test_border_radius_target_clamp_uses_target_min_max_size(_app: QApplication,
         "border-bottom-left-radius",
     ):
         assert ctx.css_anim_props.get(corner) == "22.000px", f"{corner} should finish at the target-size clamp"
+    destroy(widget)
+
+
+def test_batched_flush_clamps_overshooting_radius_against_pending_size(_app: QApplication) -> None:
+    engine = make_engine("""
+        .box {
+            width: 50px;
+            height: 50px;
+            border-radius: 13px;
+            transition: all 200ms cubic-bezier(0.175, 0.885, 0.32, 1.75);
+        }
+        .box:hover {
+            width: 40px;
+            height: 40px;
+            border-radius: 99px;
+        }
+    """)
+    widget = TrackedWidget()
+    widget.setProperty("class", "box")
+    widget.resize(50, 50)
+    hover_widget(engine, widget)
+
+    ctx = engine._ctx(widget)
+    radius_anim = _get_anim(engine, widget, "border-top-left-radius")
+    width_anim = _get_anim(engine, widget, "width")
+    height_anim = _get_anim(engine, widget, "height")
+    assert isinstance(radius_anim, GenericPropertyAnimation)
+    assert isinstance(width_anim, GenericPropertyAnimation)
+    assert isinstance(height_anim, GenericPropertyAnimation)
+
+    count_before = widget.setStyleSheet_count
+    radius_anim._on_tick(24.6)  # live 50px geometry allows this, but pending 40px target does not.
+    width_anim._on_tick(40.0)
+    height_anim._on_tick(40.0)
+
+    assert float(ctx.css_anim_props["border-top-left-radius"].removesuffix("px")) > 20.0
+    assert ctx.style_flush_pending
+
+    _app.processEvents()
+
+    assert widget.setStyleSheet_count == count_before + 1
+    assert ctx.css_anim_props["border-top-left-radius"] == "20.000px"
+    assert not ctx.style_flush_pending
+    destroy(widget)
+
+
+def test_class_change_noop_radius_rewrites_stale_larger_clamp(_app: QApplication) -> None:
+    engine = make_engine("""
+        .ws-btn {
+            margin: 2px 4px;
+            width: 22px;
+            height: 22px;
+            border: 2px solid #5e666a;
+            border-radius: 99px;
+            transition: all 200ms cubic-bezier(0.175, 0.885, 0.32, 1.75);
+        }
+        .ws-btn:hover {
+            width: 40px;
+            height: 40px;
+            border-radius: 99px;
+        }
+        .ws-btn.active_populated {
+            border-radius: 99px;
+        }
+        .ws-btn.focused_populated {
+            width: 50px;
+            border-radius: 99px;
+        }
+    """)
+    widget = QPushButton()
+    widget.setProperty("class", "ws-btn active_populated focused_populated")
+    widget.resize(50, 30)
+    ctx = engine._ctx(widget)
+    for corner in (
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ):
+        ctx.css_anim_props[corner] = "22.000px"
+
+    widget.setProperty("class", "ws-btn active_populated")
+    engine._on_class_change(widget)
+
+    for corner in (
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ):
+        assert ctx.css_anim_props[corner] == "13.000px"
+        assert ctx.active_animations[corner].anim.state() != QAbstractAnimation.State.Running
     destroy(widget)
 
 
