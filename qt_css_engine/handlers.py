@@ -145,7 +145,7 @@ def clamp_border_radius(
     height -= margin_side_px(props, "top") + margin_side_px(props, "bottom")
     if width <= 0 or height <= 0:
         return value
-    return math.floor(min(value, min(width, height) / 2.0))
+    return float(math.floor(min(value, min(width, height) / 2.0)))
 
 
 class BoxShadowHandle(QObject):
@@ -412,6 +412,8 @@ class GenericPropertyAnimation(QObject):
         self.anim = QVariantAnimation(self)
         self.anim.setDuration(duration_ms)
         self.anim.setEasingCurve(easing_curve)
+        self.anim.setStartValue(self.current_val)
+        self.anim.setEndValue(self.current_val)
         self.anim.valueChanged.connect(self._on_tick)
         self.anim.finished.connect(self._on_finished)
 
@@ -457,9 +459,12 @@ class GenericPropertyAnimation(QObject):
         """Update box-model props used for border-radius clamping."""
         self._box_props = dict(box_props)
 
-    def _on_tick(self, val: int | float) -> None:
+    def _on_tick(self, val: int | float | None) -> None:
         """Write interpolated numeric value to css_anim_props and refresh the widget stylesheet."""
         if not is_qobject_alive(self.widget):
+            self.anim.stop()
+            return
+        if val is None:
             self.anim.stop()
             return
         final_box_size = (
@@ -470,9 +475,9 @@ class GenericPropertyAnimation(QObject):
             else None
         )
         if final_box_size is not None:
-            self.current_val = self._effective_target_value(float(val), box_size=final_box_size)
+            self.current_val = self._effective_target_value(val, box_size=final_box_size)
         else:
-            self.current_val = self._effective_anim_value(float(val))
+            self.current_val = self._effective_anim_value(val)
         written = max(0.0, self.current_val) if self.prop in NON_NEGATIVE_PROPS else self.current_val
         written = clamp_border_radius(self.widget, self.prop, written, self.unit, self._box_props, final_box_size)
         props = self._props
@@ -485,7 +490,7 @@ class GenericPropertyAnimation(QObject):
         """Remove the inline size constraint when targeting the natural layout size."""
         if self.prop in BORDER_RADIUS_PROPS and self._target_box_size is not None:
             try:
-                self._on_tick(float(self.anim.endValue()))
+                self._on_tick(self.anim.endValue())
             except RuntimeError:
                 pass
         self._target_box_size = None
@@ -548,7 +553,7 @@ class GenericPropertyAnimation(QObject):
         parsed = parse_css_numeric(target_raw)
         if parsed is None:
             return
-        t_val = self._effective_target_value(float(parsed[0]), parsed[1], box_size)
+        t_val = self._effective_target_value(parsed[0], parsed[1], box_size)
         is_running = self.anim.state() == self.anim.State.Running
         if is_running and t_val == self.anim.endValue():
             return

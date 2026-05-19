@@ -1317,6 +1317,31 @@ def test_generic_border_radius_animation_clamped_to_half_min_side(_app: QApplica
     destroy(widget)
 
 
+def test_generic_border_radius_steps_reverse_keeps_qvariant_endpoints_float(_app: QApplication) -> None:
+    widget = QWidget()
+    widget.resize(100, 100)
+    ctx = WidgetContext()
+    anim = GenericPropertyAnimation(
+        widget,
+        "border-bottom-left-radius",
+        0.0,
+        100,
+        make_steps_curve(1, "jump-end"),
+        ctx=ctx,
+    )
+
+    anim.set_target("20px")
+    anim.anim.setCurrentTime(50)
+    anim.set_target("0px")
+    anim.anim.setCurrentTime(50)
+
+    assert isinstance(anim.anim.startValue(), float)
+    assert isinstance(anim.anim.endValue(), float)
+    assert anim.anim.currentValue() is not None
+
+    destroy(widget)
+
+
 def test_generic_border_radius_uses_size_hint_when_geometry_unset(_app: QApplication) -> None:
     widget = FixedHintWidget()
     widget.resize(0, 0)
