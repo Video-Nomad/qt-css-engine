@@ -21,6 +21,7 @@ from .handlers import (
     GenericPropertyAnimation,
     OpacityAnimation,
     clamp_border_radius,
+    target_border_radius_box_size,
 )
 from .qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, Qt, QTimer
 from .qt_compat.QtGui import QMouseEvent
@@ -706,7 +707,8 @@ class TransitionEngine(QObject):
         if parsed is None:
             return False
         value, unit = parsed
-        return clamp_border_radius(widget, prop, max(0.0, value), unit, target_props) != value
+        box_size = target_border_radius_box_size(widget, target_props)
+        return clamp_border_radius(widget, prop, max(0.0, value), unit, target_props, box_size) != value
 
     def _apply_prop_animation(
         self,
@@ -909,13 +911,16 @@ class TransitionEngine(QObject):
         if not anim_obj:
             return False
 
+        box_size = target_border_radius_box_size(widget, target_props) if prop in BORDER_RADIUS_PROPS else None
         if is_natural_target and isinstance(anim_obj, GenericPropertyAnimation):
             anim_obj.update_box_props(target_props)
-            anim_obj.set_target(target_raw, clean_on_finish=True)
+            anim_obj.set_target(target_raw, clean_on_finish=True, box_size=box_size)
         else:
             if isinstance(anim_obj, GenericPropertyAnimation):
                 anim_obj.update_box_props(target_props)
-            anim_obj.set_target(target_raw)
+                anim_obj.set_target(target_raw, box_size=box_size)
+            else:
+                anim_obj.set_target(target_raw)
 
         # Negative transition-delay: start immediately but seek |delay| ms into the timeline,
         # as if the animation had already been running that long (CSS spec §transition-delay).
@@ -1376,7 +1381,12 @@ class TransitionEngine(QObject):
             else:
                 if isinstance(anim_obj, GenericPropertyAnimation):
                     anim_obj.update_box_props(target_props)
-                anim_obj.snap_to(target_raw)
+                    if prop in BORDER_RADIUS_PROPS:
+                        anim_obj.snap_to(target_raw, target_border_radius_box_size(widget, target_props))
+                    else:
+                        anim_obj.snap_to(target_raw)
+                else:
+                    anim_obj.snap_to(target_raw)
             return not isinstance(anim_obj, (OpacityAnimation, BoxShadowHandle))
         if prop in EFFECT_PROPS:
             new_anim = self._create_animation_obj(widget, prop, target_raw, 0, QEasingCurve.Type.Linear, target_props)
@@ -1391,7 +1401,8 @@ class TransitionEngine(QObject):
         parsed = parse_css_numeric(target_raw)
         if parsed is not None:
             value, unit = parsed
-            clamped = clamp_border_radius(widget, prop, max(0.0, value), unit, target_props)
+            box_size = target_border_radius_box_size(widget, target_props)
+            clamped = clamp_border_radius(widget, prop, max(0.0, value), unit, target_props, box_size)
             if clamped != value and prop in NON_NEGATIVE_PROPS:
                 ctx.css_anim_props[prop] = f"{clamped:.3f}{unit}"
                 return True

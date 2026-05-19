@@ -589,6 +589,56 @@ def test_border_radius_animation_target_clamped_to_half_min_side(_app: QApplicat
     destroy(widget)
 
 
+def test_border_radius_target_clamp_uses_target_min_max_size(_app: QApplication, qtbot: QtBot) -> None:
+    engine = make_engine("""
+        .ws-btn {
+            margin: 2px 4px;
+            min-width: 20px;
+            max-width: 20px;
+            min-height: 20px;
+            max-height: 20px;
+            border: 2px solid #5e666a;
+            border-radius: 13px;
+            transition: all 300ms ease;
+        }
+        .ws-btn:hover {
+            margin: 2px 4px;
+            min-width: 40px;
+            max-width: 40px;
+            min-height: 40px;
+            max-height: 40px;
+            border-radius: 99px;
+            border: 2px solid #a7c080;
+        }
+    """)
+    widget = QPushButton()
+    widget.setProperty("class", "ws-btn")
+    # Base margin-box: content 20 + border 4 + horizontal margin 8; height uses vertical margin 4.
+    widget.resize(32, 28)
+    hover_widget(engine, widget)
+
+    for corner in (
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ):
+        anim = _get_anim(engine, widget, corner)
+        assert isinstance(anim, GenericPropertyAnimation)
+        assert anim.anim.endValue() == pytest.approx(22.0), f"{corner} should clamp against the 40px target size"
+
+    qtbot.wait(350)
+    ctx = engine._ctx(widget)
+    for corner in (
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ):
+        assert ctx.css_anim_props.get(corner) == "22.000px", f"{corner} should finish at the target-size clamp"
+    destroy(widget)
+
+
 def test_border_radius_sidebar_qframe_clamps_to_margin_box(_app: QApplication) -> None:
     css = """
         .sidebar {
