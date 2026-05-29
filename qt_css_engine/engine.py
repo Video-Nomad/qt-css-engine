@@ -566,7 +566,7 @@ class TransitionEngine(QObject):
         ctx = self._contexts.pop(wid, None)
         if ctx is None:
             return
-        event_logger.debug("On widget destroyed: %s", widget)
+        event_logger.debug("On widget destroyed: %s, %s", widget.__class__, wid)
         for timer in ctx.pending_delays.values():
             try:
                 timer.stop()
