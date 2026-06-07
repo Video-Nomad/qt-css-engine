@@ -76,6 +76,13 @@ class WidgetContext:
     clicked_anim_callbacks: dict[str, Callable[[], None]] = field(
         default_factory=lambda: dict[str, Callable[[], None]]()
     )
+    # Last target rule props seen during evaluation. Batched flushes merge these with
+    # css_anim_props so radius clamping can still see unchanged margin/border values.
+    style_box_props: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    # True while an inline stylesheet flush is queued for this widget.
+    style_flush_pending: bool = False
+    # True while class-change evaluation must synchronously restore inline animation styles.
+    style_flush_immediate: bool = False
 
 
 @dataclass

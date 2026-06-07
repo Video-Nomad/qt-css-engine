@@ -21,6 +21,7 @@ from .handlers import (
     GenericPropertyAnimation,
     OpacityAnimation,
     clamp_border_radius,
+    target_border_radius_box_size,
 )
 from .qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, Qt, QTimer
 from .qt_compat.QtGui import QMouseEvent
@@ -565,7 +566,7 @@ class TransitionEngine(QObject):
         ctx = self._contexts.pop(wid, None)
         if ctx is None:
             return
-        event_logger.debug("On widget destroyed: %s", widget)
+        event_logger.debug("On widget destroyed: %s, %s", widget.__class__, wid)
         for timer in ctx.pending_delays.values():
             try:
                 timer.stop()
@@ -630,17 +631,70 @@ class TransitionEngine(QObject):
             target_transitions,
             all_animated_props,
         ) = self._collect_rule_state(widget, ctx)
-        needs_style_update = False
-        for prop in all_animated_props:
-            if self._apply_prop_animation(widget, ctx, prop, base_props, target_props, target_transitions, cause):
+        ctx.style_box_props = dict(target_props)
+        old_immediate = ctx.style_flush_immediate
+        ctx.style_flush_immediate = old_immediate or cause.is_class_driven
+        try:
+            needs_style_update = False
+            for prop in all_animated_props:
+                if self._apply_prop_animation(widget, ctx, prop, base_props, target_props, target_transitions, cause):
+                    needs_style_update = True
+            if self._cleanup_orphans(widget, ctx, all_animated_props, base_props):
                 needs_style_update = True
-        if self._cleanup_orphans(widget, ctx, all_animated_props, base_props):
-            needs_style_update = True
-        if needs_style_update:
-            event_logger.debug("Updating style: %s", widget)
-            widget.setStyleSheet(scoped_anim_style(widget, ctx.css_anim_props))
-            update_shadow_ancestor(widget)
-        self._apply_cursor(widget, ctx, target_props)
+            if needs_style_update:
+                event_logger.debug("Updating style: %s", widget)
+                self._flush_widget_style_now(widget, ctx)
+            self._apply_cursor(widget, ctx, target_props)
+        finally:
+            ctx.style_flush_immediate = old_immediate
+
+    def _schedule_style_flush(self, widget: QWidget, ctx: WidgetContext) -> None:
+        """Queue one stylesheet write for this widget after the current burst of animation ticks."""
+        if ctx.style_flush_immediate or ctx.class_anim_props:
+            self._flush_widget_style_now(widget, ctx)
+            return
+        if ctx.style_flush_pending:
+            return
+        ctx.style_flush_pending = True
+        wid = id(widget)
+        QTimer.singleShot(0, lambda: self._flush_scheduled_widget_style(widget, wid))
+
+    def _flush_scheduled_widget_style(self, widget: QWidget, wid: int) -> None:
+        ctx = self._contexts.get(wid)
+        if ctx is None or not ctx.style_flush_pending:
+            return
+        try:
+            self._flush_widget_style_now(widget, ctx)
+        except RuntimeError:
+            ctx.style_flush_pending = False
+
+    def _flush_widget_style_now(self, widget: QWidget, ctx: WidgetContext) -> None:
+        """Normalize interdependent inline props and apply them as one scoped stylesheet."""
+        ctx.style_flush_pending = False
+        self._normalize_dependent_anim_props(widget, ctx)
+        widget.setStyleSheet(scoped_anim_style(widget, ctx.css_anim_props))
+        update_shadow_ancestor(widget)
+
+    def _normalize_dependent_anim_props(self, widget: QWidget, ctx: WidgetContext) -> None:
+        """
+        Clamp radius values against the same pending box model that is about to be applied.
+
+        Overshooting easing curves can push radius beyond the target box's safe cap while
+        width/height/radius animations tick separately. Normalizing immediately before the
+        batched stylesheet write prevents Qt from seeing an invalid radius and snapping square.
+        """
+        props = ctx.css_anim_props
+        box_props = {**ctx.style_box_props, **props}
+        box_size = target_border_radius_box_size(widget, box_props)
+        for prop in BORDER_RADIUS_PROPS:
+            raw = props.get(prop)
+            parsed = parse_css_numeric(raw)
+            if parsed is None:
+                continue
+            value, unit = parsed
+            clamped = clamp_border_radius(widget, prop, max(0.0, value), unit, box_props, box_size)
+            if clamped != value:
+                props[prop] = f"{clamped:.3f}{unit}"
 
     def _collect_rule_state(
         self, widget: QWidget, ctx: WidgetContext
@@ -706,7 +760,8 @@ class TransitionEngine(QObject):
         if parsed is None:
             return False
         value, unit = parsed
-        return clamp_border_radius(widget, prop, max(0.0, value), unit, target_props) != value
+        box_size = target_border_radius_box_size(widget, target_props)
+        return clamp_border_radius(widget, prop, max(0.0, value), unit, target_props, box_size) != value
 
     def _apply_prop_animation(
         self,
@@ -909,13 +964,16 @@ class TransitionEngine(QObject):
         if not anim_obj:
             return False
 
+        box_size = target_border_radius_box_size(widget, target_props) if prop in BORDER_RADIUS_PROPS else None
         if is_natural_target and isinstance(anim_obj, GenericPropertyAnimation):
             anim_obj.update_box_props(target_props)
-            anim_obj.set_target(target_raw, clean_on_finish=True)
+            anim_obj.set_target(target_raw, clean_on_finish=True, box_size=box_size)
         else:
             if isinstance(anim_obj, GenericPropertyAnimation):
                 anim_obj.update_box_props(target_props)
-            anim_obj.set_target(target_raw)
+                anim_obj.set_target(target_raw, box_size=box_size)
+            else:
+                anim_obj.set_target(target_raw)
 
         # Negative transition-delay: start immediately but seek |delay| ms into the timeline,
         # as if the animation had already been running that long (CSS spec §transition-delay).
@@ -1351,13 +1409,14 @@ class TransitionEngine(QObject):
             return
         ctx = self._ctx(widget)
         base_props, target_props, target_transitions, all_animated_props = self._collect_rule_state(widget, ctx)
+        ctx.style_box_props = dict(target_props)
         if prop not in all_animated_props:
             return
         needs_update = self._apply_prop_animation(
             widget, ctx, prop, base_props, target_props, target_transitions, EvaluationCause.DELAY_FIRE
         )
         if needs_update:
-            widget.setStyleSheet(scoped_anim_style(widget, ctx.css_anim_props))
+            self._flush_widget_style_now(widget, ctx)
 
     def _snap_prop_or_effect(
         self,
@@ -1376,7 +1435,12 @@ class TransitionEngine(QObject):
             else:
                 if isinstance(anim_obj, GenericPropertyAnimation):
                     anim_obj.update_box_props(target_props)
-                anim_obj.snap_to(target_raw)
+                    if prop in BORDER_RADIUS_PROPS:
+                        anim_obj.snap_to(target_raw, target_border_radius_box_size(widget, target_props))
+                    else:
+                        anim_obj.snap_to(target_raw)
+                else:
+                    anim_obj.snap_to(target_raw)
             return not isinstance(anim_obj, (OpacityAnimation, BoxShadowHandle))
         if prop in EFFECT_PROPS:
             new_anim = self._create_animation_obj(widget, prop, target_raw, 0, QEasingCurve.Type.Linear, target_props)
@@ -1391,7 +1455,8 @@ class TransitionEngine(QObject):
         parsed = parse_css_numeric(target_raw)
         if parsed is not None:
             value, unit = parsed
-            clamped = clamp_border_radius(widget, prop, max(0.0, value), unit, target_props)
+            box_size = target_border_radius_box_size(widget, target_props)
+            clamped = clamp_border_radius(widget, prop, max(0.0, value), unit, target_props, box_size)
             if clamped != value and prop in NON_NEGATIVE_PROPS:
                 ctx.css_anim_props[prop] = f"{clamped:.3f}{unit}"
                 return True
@@ -1457,7 +1522,16 @@ class TransitionEngine(QObject):
         """Instantiate the correct Animation subclass for a CSS property."""
         ctx = self._ctx(widget)
         if "color" in prop:
-            return ColorAnimation(widget, prop, initial_raw, duration_ms, curve, self, ctx=ctx)
+            return ColorAnimation(
+                widget,
+                prop,
+                initial_raw,
+                duration_ms,
+                curve,
+                self,
+                ctx=ctx,
+                style_flush_callback=self._schedule_style_flush,
+            )
         if prop == "opacity":
             return OpacityAnimation(
                 widget,
@@ -1474,6 +1548,15 @@ class TransitionEngine(QObject):
             if parsed is not None:
                 start_val, unit = parsed
                 return GenericPropertyAnimation(
-                    widget, prop, start_val, duration_ms, curve, self, unit=unit, ctx=ctx, box_props=box_props
+                    widget,
+                    prop,
+                    start_val,
+                    duration_ms,
+                    curve,
+                    self,
+                    unit=unit,
+                    ctx=ctx,
+                    box_props=box_props,
+                    style_flush_callback=self._schedule_style_flush,
                 )
         return None

@@ -514,6 +514,32 @@ def test_border_shorthand_keyword_width() -> None:
     assert rule.properties["border-bottom-color"] == "blue"
 
 
+def test_border_shorthand_rgba_color() -> None:
+    css = ".box { border: 3px solid rgba(255, 0, 0, 0.5); }"
+    _, rules = extract_rules(css)
+    rule = get_rule(rules, ".box")
+    expected = "rgba(255, 0, 0, 0.5)"
+    assert rule.properties["border-top-width"] == "3px"
+    assert rule.properties["border-style"] == "solid"
+    assert rule.properties["border-top-color"] == expected
+    assert rule.properties["border-right-color"] == expected
+    assert rule.properties["border-bottom-color"] == expected
+    assert rule.properties["border-left-color"] == expected
+
+
+def test_border_color_shorthand_rgba_color() -> None:
+    css = ".box { border-color: rgba(255, 0, 0, 0.5); }"
+    _, rules = extract_rules(css)
+    rule = get_rule(rules, ".box")
+    expected = "rgba(255, 0, 0, 0.5)"
+    assert rule.properties == {
+        "border-top-color": expected,
+        "border-right-color": expected,
+        "border-bottom-color": expected,
+        "border-left-color": expected,
+    }
+
+
 def test_transition_border_expands_to_animatable_longhands() -> None:
     """transition: border should cover width sides + border-color, but NOT border-style."""
     css = ".box { transition: border 200ms ease; }"
