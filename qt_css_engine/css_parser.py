@@ -30,10 +30,16 @@ def _classify_border_token(token: str) -> str:
     return "color"
 
 
+def _split_css_components(value: str) -> list[str]:
+    """Split a CSS value on top-level component boundaries, preserving function arguments."""
+    tokens = tinycss2.parse_component_value_list(value, skip_comments=True)
+    return [_serialize_value([tok]) for tok in tokens if tok.type != "whitespace"]
+
+
 def _expand_border(value: str) -> dict[str, str]:
     """Parse `border: <width> <style> <color>` (any token order) into component properties."""
     result: dict[str, str] = {}
-    for token in value.split():
+    for token in _split_css_components(value):
         kind = _classify_border_token(token)
         if kind == "width":
             result["border-width"] = token
@@ -55,7 +61,7 @@ def _expand_shorthand(prop: str, value: str) -> dict[str, str]:
     longhands = SHORTHAND_SIDES.get(prop)
     if not longhands:
         return {prop: value}
-    parts = value.split()
+    parts = _split_css_components(value)
     n = len(parts)
     if n == 1:
         expanded = [parts[0]] * 4
