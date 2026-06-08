@@ -40,33 +40,50 @@ os.environ["CSS_ENGINE_EVENT_LOGGING"] = "1"
 REPRO_CSS = """
 QWidget { background-color: #1a1a1a; color: white; font-size: 13px; }
 
-.bar { background-color: #1a1a1a; }
-
-.container { background-color: transparent; }
+.container { background-color: transparent; box-shadow: 1px 1px 0px black; }
 
 .glazewm-workspaces .ws-btn {
-    color: #d8d8d8;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    margin-left: 1px;
-    padding: 1px 4px;
-    transition: width 300ms linear;
+    margin: 2 4px;
+    width:22px;
+    height:22px;
+    font-size: 16px;
+    color: #d3c6aa;
+    border: 2px solid #5e666a;
+    border-radius: 99px;
+    background-color: red;
+    box-shadow: 0px 0px 10px black;
+    opacity: 1.0;
+    transition-property: all, opacity;
+    transition-duration: 600ms, 50ms;
+    transition-timing-function: cubic-bezier(0.175, 1.2, 0.32, 1.2), ease;
+}
+
+.glazewm-workspaces .ws-btn:hover {
+    margin: 2 4px;
+    width:40px;
+    height:40px;
+    border-radius: 99px;
+    border: 2px solid #a7c080;
+    box-shadow: 0px 0px 4px #a7c080;
+    opacity: 1.0;
 }
 
 .glazewm-workspaces .ws-btn.active_populated,
 .glazewm-workspaces .ws-btn.active_empty {
-    background: #525252;
+    border-radius: 99px;
+    background: transparent;
 }
 
 .glazewm-workspaces .ws-btn.focused_populated,
 .glazewm-workspaces .ws-btn.focused_empty {
+    border-radius: 99px;
     width: 50px;
     background: #2d7ef7;
 }
 
 .glazewm-workspaces .ws-btn.empty,
 .glazewm-workspaces .ws-btn.empty .label {
+    border-radius: 99px;
     color: #9d9d9d;
 }
 
@@ -142,7 +159,6 @@ class ReproBar(QWidget):
         self.position_bar()
 
 
-
 def print_ws_state(engine: TransitionEngine, ws_buttons: list[QPushButton], header: str) -> None:
     print(f"\n=== {header} ===")
     for btn in ws_buttons:
@@ -184,7 +200,7 @@ def attach_width_debug(engine: TransitionEngine, btn: QPushButton) -> None:
 
     def on_finished(button: QPushButton = btn) -> None:
         ctx_now = engine._contexts.get(id(button))
-        css_props = {} if ctx_now is None else {k: v for k, v in ctx_now.css_anim_props.items() if 'width' in k}
+        css_props = {} if ctx_now is None else {k: v for k, v in ctx_now.css_anim_props.items() if "width" in k}
         print(
             f"[done] btn={button.text()} class={class_str(button)!r} width={button.width()} "
             f"hint={button.sizeHint().width()} min={button.minimumWidth()} "

@@ -16,7 +16,7 @@
 .label {
     background-color: #444444;
     color: white;
-    border: 3px solid green;
+    border: 3px solid rgba(255, 0, 0, 0.1);
     border-radius: 4px;
     padding: 10px 20px;
     transition: all 300ms ease;
@@ -26,6 +26,8 @@
 .label:hover {
     background-color: orange;
     border-color: red;
+    border-radius: 99px;
+    border: 3px solid rgba(255, 0, 0, 0.9);
 }
 
 .btn:pressed,
@@ -76,11 +78,11 @@
     border: 3px solid orange;
     border-radius: 8px;
     padding: 20px;
-    transition: border-radius 1000ms ease;
+    transition: border-radius 300ms linear;
 }
 
 .sidebar:hover {
-    border-radius: 16px;
+    border-radius: 1000px;
 }
 
 .sidebar .action {

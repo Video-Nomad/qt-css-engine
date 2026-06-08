@@ -32,9 +32,9 @@ def add_widget(parent: QWidget) -> None:
     """Add a test .btn widget at the bottom of the layout to test dynamic properties"""
     btn = QPushButton("Dynamic (.btn) with applied styles and animation")
     btn.setProperty("class", "btn")
-    if l := parent.layout():
+    if (layout := parent.layout()) is not None:
         dynamic_btns.append(btn)
-        l.addWidget(btn)
+        layout.addWidget(btn)
 
 
 def remove_widget() -> None:
@@ -83,12 +83,12 @@ def _dark_palette() -> QPalette:
     p.setColor(QPalette.ColorRole.Window, dark)
     p.setColor(QPalette.ColorRole.WindowText, text)
     p.setColor(QPalette.ColorRole.Base, dark)
-    p.setColor(QPalette.ColorRole.AlternateBase,  mid)
+    p.setColor(QPalette.ColorRole.AlternateBase, mid)
     p.setColor(QPalette.ColorRole.Text, text)
     p.setColor(QPalette.ColorRole.BrightText, bright)
-    p.setColor(QPalette.ColorRole.Button,light)
+    p.setColor(QPalette.ColorRole.Button, light)
     p.setColor(QPalette.ColorRole.ButtonText, bright)
-    p.setColor(QPalette.ColorRole.Highlight,  accent)
+    p.setColor(QPalette.ColorRole.Highlight, accent)
     p.setColor(QPalette.ColorRole.HighlightedText, bright)
     p.setColor(QPalette.ColorRole.ToolTipBase, mid)
     p.setColor(QPalette.ColorRole.ToolTipText, text)
@@ -265,6 +265,20 @@ def main():
     action_btn.setProperty("class", "action")
     sidebar_layout.addWidget(action_btn)
 
+    parent_change_row = QFrame()
+    parent_change_row_layout = QHBoxLayout(parent_change_row)
+    parent_change_row_layout.setContentsMargins(0, 0, 0, 0)
+    parent_change_row_layout.setSpacing(8)
+    sidebar_layout.addWidget(parent_change_row)
+
+    after_insert_btn = QPushButton("insertWidget → setProperty")
+    parent_change_row_layout.insertWidget(0, after_insert_btn)
+    after_insert_btn.setProperty("class", "action")
+
+    before_insert_btn = QPushButton("setProperty → insertWidget")
+    before_insert_btn.setProperty("class", "action")
+    parent_change_row_layout.insertWidget(1, before_insert_btn)
+
     layout.addWidget(sidebar)
 
     # A text edit to test :focus transitions
@@ -353,8 +367,10 @@ def main():
     checkable_btn.setProperty("class", "checkable-btn")
     checkable_btn.setCheckable(True)
     checkable_btn.setChecked(False)
+
     def _check(status: bool):
         checkable_btn.setText("Checked" if status else "Unchecked")
+
     checkable_btn.clicked.connect(_check)
     layout.addWidget(checkable_btn)
 
@@ -402,9 +418,9 @@ def main():
     steps_row_layout.setSpacing(6)
     steps_row_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
     for variant, label in (
-        ("s-jump-end",   "steps(5, jump-end)"),
+        ("s-jump-end", "steps(5, jump-end)"),
         ("s-jump-start", "steps(5, jump-start)"),
-        ("s-jump-none",  "steps(5, jump-none)"),
+        ("s-jump-none", "steps(5, jump-none)"),
         ("s-step-start", "step-start"),
     ):
         b = QPushButton(label)
