@@ -24,6 +24,7 @@ from qt_css_engine.qt_compat.QtWidgets import (
     QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
     QLabel,
+    QVBoxLayout,
     QWidget,
 )
 from qt_css_engine.types import Animation, EvaluationCause, ShadowParams, WidgetContext
@@ -2865,6 +2866,31 @@ def test_effect_box_shadow_installed_on_initial_evaluation(_app: QApplication) -
     assert _has_anim(engine, widget, "box-shadow")
     assert isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect)
     destroy(widget)
+
+
+def test_parent_change_reevaluates_preclassed_ancestor_effect(_app: QApplication, qtbot: QtBot) -> None:
+    """A class set before layout insertion must match ancestor-dependent effect rules after insertion."""
+    engine = make_engine(".popup .graph-title { box-shadow: 0 4px 8px rgba(0,0,0,0.5); }")
+    parent = QWidget()
+    parent.setProperty("class", "popup")
+    layout = QVBoxLayout(parent)
+    label = QLabel("Utilization")
+
+    _app.installEventFilter(engine)
+    try:
+        label.setProperty("class", "graph-title")
+        _app.processEvents()
+
+        assert label.graphicsEffect() is None
+
+        layout.insertWidget(0, label)
+        qtbot.wait(20)
+
+        assert _has_anim(engine, label, "box-shadow")
+        assert isinstance(label.graphicsEffect(), QGraphicsDropShadowEffect)
+    finally:
+        _app.removeEventFilter(engine)
+        destroy(parent)
 
 
 def test_effect_opacity_not_skipped_when_target_equals_base(_app: QApplication) -> None:

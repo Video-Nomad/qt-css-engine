@@ -132,6 +132,7 @@ class TransitionEngine(QObject):
         # Deferred Polish burst state: widgets queued for evaluation after the burst drains.
         self._polish_pending: bool = False
         self._polish_queue: list[QWidget] = []
+        self._polish_force_ids: set[int] = set()
         self._build_quick_filters()
 
     def _on_startup_done(self) -> None:
@@ -165,6 +166,8 @@ class TransitionEngine(QObject):
             prop_name = getattr(event, "propertyName", lambda: None)()
             if prop_name is not None and getattr(prop_name, "data", lambda: b"")() == b"class":
                 self._on_class_change(watched)
+        elif t == QEvent.Type.ParentChange:
+            self._on_parent_change(watched)
         elif t == QEvent.Type.WindowActivate:
             self._on_window_activate(watched)
         elif t == QEvent.Type.WindowDeactivate:
@@ -209,6 +212,12 @@ class TransitionEngine(QObject):
         if ctx is not None and ctx.active_animations:
             return
         # Defer all expensive work to after the burst. Qt fires Polish for every child widget synchronously
+        self._queue_polish_evaluation(widget)
+
+    def _queue_polish_evaluation(self, widget: QWidget, *, force: bool = False) -> None:
+        """Queue a widget for a deferred polish-style state evaluation."""
+        if force:
+            self._polish_force_ids.add(id(widget))
         if not self._polish_pending:
             self._polish_pending = True
             self._polish_queue.clear()
@@ -219,12 +228,18 @@ class TransitionEngine(QObject):
         """Drain the deferred Polish evaluation queue after a burst completes."""
         self._polish_pending = False
         widgets, self._polish_queue = self._polish_queue, []
+        force_ids, self._polish_force_ids = self._polish_force_ids, set()
+        seen: set[int] = set()
         for w in widgets:
             try:
+                wid = id(w)
+                if wid in seen:
+                    continue
+                seen.add(wid)
                 self._ensure_wa_hover(w)
                 self._seed_active_pseudo(w)
                 ctx = self._contexts.get(id(w))
-                if ctx is None or not ctx.active_animations:
+                if wid in force_ids or ctx is None or not ctx.active_animations:
                     self._evaluate_widget_state(w, cause=EvaluationCause.POLISH)
             except RuntimeError:
                 pass
@@ -263,6 +278,16 @@ class TransitionEngine(QObject):
         ctx.class_anim_props.clear()
         self._evaluate_widget_state(widget, cause=EvaluationCause.CLASS_CHANGE)
         ctx.pre_polish_size = None
+
+    def _on_parent_change(self, widget: QWidget) -> None:
+        """Handle reparenting; ancestor-dependent selectors may now match differently."""
+        self._rule_cache.clear()
+        for w in (widget, *widget.findChildren(QWidget)):
+            try:
+                if self._should_evaluate(w):
+                    self._queue_polish_evaluation(w, force=True)
+            except RuntimeError:
+                pass
 
     def _on_window_activate(self, widget: QWidget) -> None:
         """Set :active on children that have :active rules when the window gains focus."""
