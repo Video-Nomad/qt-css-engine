@@ -162,6 +162,8 @@ class TransitionEngine(QObject):
             return False
         if t == QEvent.Type.Polish:
             self._on_polish(watched)
+        elif t == QEvent.Type.Resize:
+            self._on_resize(watched)
         elif t == QEvent.Type.DynamicPropertyChange:
             prop_name = getattr(event, "propertyName", lambda: None)()
             if prop_name is not None and getattr(prop_name, "data", lambda: b"")() == b"class":
@@ -213,6 +215,29 @@ class TransitionEngine(QObject):
             return
         # Defer all expensive work to after the burst. Qt fires Polish for every child widget synchronously
         self._queue_polish_evaluation(widget)
+
+    def _on_resize(self, widget: QWidget) -> None:
+        """Refresh static border-radius clamps after layout assigns a new widget size."""
+        if not self._has_border_radius_rules:
+            return
+        ctx = self._contexts.get(id(widget))
+        if ctx is not None and ctx.internal_write_depth > 0:
+            return
+        if ctx is not None and self._has_running_animation(ctx):
+            return
+        if not self._should_evaluate(widget):
+            return
+        if not any(p in BORDER_RADIUS_PROPS for rule in self._matching_rules(widget) for p in rule.properties):
+            return
+        event_logger.debug("On resize event: %s", widget)
+        self._queue_polish_evaluation(widget, force=True)
+
+    @staticmethod
+    def _has_running_animation(ctx: WidgetContext) -> bool:
+        """Return True while any registered animation is actively transitioning."""
+        return any(
+            anim_obj.anim.state() == QAbstractAnimation.State.Running for anim_obj in ctx.active_animations.values()
+        )
 
     def _queue_polish_evaluation(self, widget: QWidget, *, force: bool = False) -> None:
         """Queue a widget for a deferred polish-style state evaluation."""

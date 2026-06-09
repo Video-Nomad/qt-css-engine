@@ -3,7 +3,7 @@ from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
 from qt_css_engine.css_parser import extract_rules
-from qt_css_engine.handlers import BoxShadowHandle
+from qt_css_engine.handlers import BoxShadowHandle, GenericPropertyAnimation
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QEvent, QPointF, Qt
 from qt_css_engine.qt_compat.QtGui import QMouseEvent
 from qt_css_engine.qt_compat.QtWidgets import QWidget
@@ -188,3 +188,144 @@ def test_active_pseudo_triggers_transition(qtbot: QtBot):
     engine._evaluate_widget_state(widget)
 
     assert "background-color" in engine._ctx(widget).active_animations
+
+
+def test_border_radius_reclamps_after_resize_event(qtbot: QtBot):
+    """
+    A radius clamped against an early hidden/pre-layout size must be recomputed once
+    the widget receives its final layout size.
+    """
+    engine = make_engine(".box { border-radius: 99px; }")
+
+    widget = QWidget()
+    qtbot.addWidget(widget)
+    widget.setProperty("class", "box")
+    widget.resize(20, 20)
+
+    engine.eventFilter(widget, QEvent(QEvent.Type.Polish))
+    qtbot.wait(20)
+
+    ctx = engine._ctx(widget)
+    radius_props = (
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    )
+    assert {ctx.css_anim_props.get(prop) for prop in radius_props} == {"10.000px"}
+
+    widget.resize(200, 40)
+    engine.eventFilter(widget, QEvent(QEvent.Type.Resize))
+    qtbot.wait(20)
+
+    assert {ctx.css_anim_props.get(prop) for prop in radius_props} == {"20.000px"}
+
+
+def test_resize_event_does_not_snap_running_size_transition(qtbot: QtBot):
+    """
+    Resize events emitted by a running size animation must not trigger a polish-style
+    re-evaluation, because Polish causes intentionally snap transitions.
+    """
+    css = """
+    .box {
+        width: 20px;
+        border-radius: 99px;
+        transition: width 200ms;
+    }
+    .box.wide {
+        width: 100px;
+    }
+    """
+    engine = make_engine(css)
+
+    widget = QWidget()
+    qtbot.addWidget(widget)
+    widget.setProperty("class", "box")
+    widget.resize(20, 20)
+    engine._evaluate_widget_state(widget)
+
+    widget.setProperty("class", "box wide")
+    engine._on_class_change(widget)
+
+    ctx = engine._ctx(widget)
+    anim = ctx.active_animations.get("width")
+    assert isinstance(anim, GenericPropertyAnimation)
+    assert anim.anim.state() == anim.anim.State.Running
+
+    engine.eventFilter(widget, QEvent(QEvent.Type.Resize))
+    qtbot.wait(20)
+
+    assert anim.anim.state() == anim.anim.State.Running
+    assert anim.current_val < float(anim.anim.endValue())
+
+
+def test_hidden_child_show_reclamps_parent_radius_with_effect_handles(qtbot: QtBot):
+    """
+    YASB open_meteo shape: a hidden icon label is shown later, resizing its visible
+    .widget-container parent. The parent also has opacity/box-shadow handles, which
+    must not prevent resize-time border-radius clamping.
+    """
+    css = """
+    .open-meteo-widget .widget-container {
+        background-color: red;
+        border-radius: 99px;
+        border-top-right-radius: 0px;
+        border-bottom-right-radius: 0px;
+        box-shadow: 0px 0px 10px black;
+        opacity: 1.0;
+    }
+    .open-meteo-widget .icon {
+        opacity: 1.0;
+    }
+    """
+    engine = make_engine(css)
+
+    from qt_css_engine.qt_compat.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel
+
+    app = QApplication.instance()
+    assert isinstance(app, QApplication)
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    parent.setProperty("class", "open-meteo-widget")
+    parent.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    parent_layout = QHBoxLayout(parent)
+    parent_layout.setContentsMargins(0, 0, 0, 0)
+
+    frame = QFrame()
+    frame.setProperty("class", "widget-container")
+    frame_layout = QHBoxLayout(frame)
+    frame_layout.setContentsMargins(0, 0, 0, 0)
+    frame_layout.setSpacing(0)
+    parent_layout.addWidget(frame)
+
+    label = QLabel("x")
+    label.setProperty("class", "icon")
+    label.hide()
+    frame_layout.addWidget(label)
+
+    app.installEventFilter(engine)
+    try:
+        parent.show()
+        qtbot.wait(20)
+
+        frame_ctx = engine._ctx(frame)
+        assert {"box-shadow", "opacity"} <= set(frame_ctx.active_animations)
+        assert not any(prop.startswith("border-") and prop.endswith("-radius") for prop in frame_ctx.css_anim_props)
+
+        label.setProperty("class", "icon sunnyDay")
+        style = label.style()
+        assert style is not None
+        style.unpolish(label)
+        style.polish(label)
+        label.update()
+        label.show()
+        qtbot.wait(20)
+
+        assert frame.width() > 0
+        assert frame_ctx.css_anim_props.get("border-top-left-radius") == "2.000px"
+        assert frame_ctx.css_anim_props.get("border-bottom-left-radius") == "2.000px"
+        assert "border-top-right-radius" not in frame_ctx.css_anim_props
+        assert "border-bottom-right-radius" not in frame_ctx.css_anim_props
+    finally:
+        app.removeEventFilter(engine)

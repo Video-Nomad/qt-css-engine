@@ -72,6 +72,7 @@ ENGINE_EVENT_TYPES: frozenset[QEvent.Type] = PSEUDO_EVENTS | frozenset(
         QEvent.Type.WindowActivate,
         QEvent.Type.WindowDeactivate,
         QEvent.Type.Leave,
+        QEvent.Type.Resize,
     }
 )
 
