@@ -2893,6 +2893,66 @@ def test_parent_change_reevaluates_preclassed_ancestor_effect(_app: QApplication
         destroy(parent)
 
 
+def test_parent_change_transition_all_gradient_background_stays_static(_app: QApplication, qtbot: QtBot) -> None:
+    """ParentChange must not move static gradient backgrounds into ColorAnimation state."""
+    engine = make_engine("""
+        .cpu-popup .header .pin-btn {
+            background: linear-gradient(0deg, rgb(94, 102, 106) 0%, rgb(41, 48, 53) 100%);
+            transition: all 300ms ease;
+        }
+    """)
+    popup = QWidget()
+    popup.setProperty("class", "cpu-popup")
+    popup_layout = QVBoxLayout(popup)
+    header = QWidget()
+    header.setProperty("class", "header")
+    header_layout = QVBoxLayout(header)
+    popup_layout.addWidget(header)
+    pin = QWidget()
+    pin.setProperty("class", "pin-btn")
+
+    _app.installEventFilter(engine)
+    try:
+        header_layout.insertWidget(0, pin)
+        qtbot.wait(20)
+
+        ctx = engine._ctx(pin)
+        assert "background-color" not in ctx.css_anim_props
+        assert "background-color" not in ctx.active_animations
+    finally:
+        _app.removeEventFilter(engine)
+        destroy(popup)
+
+
+def test_transition_all_gradient_background_snaps_solid_hover_without_color_animation(_app: QApplication) -> None:
+    """A solid hover over a gradient base should snap, not interpolate from an invalid QColor."""
+    engine = make_engine("""
+        .pin-btn {
+            background: linear-gradient(0deg, rgb(94, 102, 106) 0%, rgb(41, 48, 53) 100%);
+            transition: all 300ms ease;
+        }
+        .pin-btn:hover { background: red; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "pin-btn")
+
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    ctx = engine._ctx(widget)
+    assert "background-color" not in ctx.css_anim_props
+
+    ctx.active_pseudos.add(":hover")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+
+    assert ctx.css_anim_props.get("background-color") == "red"
+    assert "background-color" not in ctx.active_animations
+
+    ctx.active_pseudos.clear()
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+
+    assert "background-color" not in ctx.css_anim_props
+    destroy(widget)
+
+
 def test_effect_opacity_not_skipped_when_target_equals_base(_app: QApplication) -> None:
     """
     Regression: a no-transition effect prop where target_raw == base_props value must still

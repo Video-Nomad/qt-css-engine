@@ -33,6 +33,7 @@ from .utils import (
     get_preferred_size_fallback,
     make_cubic_bezier_curve,
     make_steps_curve,
+    parse_color,
     parse_css_numeric,
     parse_css_val,
     scoped_anim_style,
@@ -848,6 +849,9 @@ class TransitionEngine(QObject):
         if not base_raw or base_raw == "auto":
             base_raw = get_preferred_size_fallback(widget, base_props, prop) if prop in SIZE_PROPS else target_raw
 
+        if prop in target_transitions and self._has_uninterpolable_color_endpoint(ctx, prop, base_raw, target_raw):
+            return self._snap_uninterpolable_color(ctx, prop, anim_obj, target_raw)
+
         # Natural target with nothing running: Qt lays out at natural size without intervention.
         # Exception: a frozen inline constraint (written during a pending delay) must be animated
         # away — Qt cannot reach natural size while the inline style constrains it.
@@ -1154,7 +1158,12 @@ class TransitionEngine(QObject):
             if is_natural_snap:
                 snap_target = get_preferred_size_fallback(orphan.widget, base_props, prop)
             if snap_target:
-                if is_natural_snap and isinstance(orphan, GenericPropertyAnimation):
+                if isinstance(orphan, ColorAnimation) and not self._is_interpolable_color_value(snap_target):
+                    orphan.anim.stop()
+                    if prop in ctx.css_anim_props:
+                        del ctx.css_anim_props[prop]
+                        needs_update = True
+                elif is_natural_snap and isinstance(orphan, GenericPropertyAnimation):
                     orphan.snap_to_natural()
                 else:
                     orphan.snap_to(snap_target)
@@ -1425,7 +1434,46 @@ class TransitionEngine(QObject):
 
     def _is_animatable(self, prop: str) -> bool:
         """Return True if the engine knows how to animate this CSS property."""
-        return "color" in prop or prop in EFFECT_PROPS or prop in SUPPORTED_NUMERIC_PROPS
+        return self._is_color_prop(prop) or prop in EFFECT_PROPS or prop in SUPPORTED_NUMERIC_PROPS
+
+    @staticmethod
+    def _is_color_prop(prop: str) -> bool:
+        """Return True for QSS color properties handled by ColorAnimation."""
+        return prop == "color" or prop.endswith("-color")
+
+    @staticmethod
+    def _is_interpolable_color_value(value: str) -> bool:
+        """Return True when value is a solid color ColorAnimation can interpolate."""
+        return parse_color(value).isValid()
+
+    def _has_uninterpolable_color_endpoint(self, ctx: WidgetContext, prop: str, base_raw: str, target_raw: str) -> bool:
+        """Return True when a color transition contains a static-only endpoint such as a gradient."""
+        if not self._is_color_prop(prop):
+            return False
+        current_raw = ctx.css_anim_props.get(prop, base_raw)
+        return not self._is_interpolable_color_value(current_raw) or not self._is_interpolable_color_value(target_raw)
+
+    def _snap_uninterpolable_color(
+        self, ctx: WidgetContext, prop: str, anim_obj: Animation | None, target_raw: str
+    ) -> bool:
+        """
+        Snap a color prop when either endpoint is not a solid color.
+
+        Solid targets still need an inline value because cleaned pseudo QSS may have stripped them.
+        Static-only targets are left to cleaned QSS, so any stale inline color must be removed.
+        """
+        if isinstance(anim_obj, ColorAnimation):
+            anim_obj.anim.stop()
+        if self._is_interpolable_color_value(target_raw):
+            if isinstance(anim_obj, ColorAnimation):
+                anim_obj.snap_to(target_raw)
+            else:
+                ctx.css_anim_props[prop] = target_raw
+            return True
+        if prop in ctx.css_anim_props:
+            del ctx.css_anim_props[prop]
+            return True
+        return False
 
     def _register_animation(self, widget: QWidget, ctx: WidgetContext, prop: str, anim_obj: Animation) -> None:
         """Register an animation object and ensure widget destroyed cleanup is wired."""

@@ -3,7 +3,7 @@
 
 import pytest
 
-from qt_css_engine.css_parser import StyleRule, extract_rules
+from qt_css_engine.css_parser import StyleRule, _is_static_gradient_prop, extract_rules
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -319,6 +319,24 @@ def test_background_stripped_from_pseudo_block_via_alias() -> None:
     cleaned, _ = extract_rules(css)
     hover_body = cleaned_block(cleaned, ".btn:hover")
     assert "background" not in hover_body
+
+
+def test_gradient_background_pseudo_preserved_with_transition_all() -> None:
+    """Gradient backgrounds are static-only, so transition: all must not strip them from pseudo QSS."""
+    css = """
+    .btn { background: steelblue; transition: all 300ms; }
+    .btn:hover { background: linear-gradient(red, blue); }
+    """
+    cleaned, _ = extract_rules(css)
+    hover_body = cleaned_block(cleaned, ".btn:hover")
+    assert "background-color" in hover_body
+    assert "qlineargradient(" in hover_body
+
+
+def test_static_gradient_prop_detection_allows_whitespace_before_paren() -> None:
+    assert _is_static_gradient_prop("background-color", "qlineargradient (x1:0, y1:0, x2:1, y2:1)")
+    assert _is_static_gradient_prop("background-color", "linear-gradient (red, blue)")
+    assert not _is_static_gradient_prop("color", "linear-gradient (red, blue)")
 
 
 # ---------------------------------------------------------------------------

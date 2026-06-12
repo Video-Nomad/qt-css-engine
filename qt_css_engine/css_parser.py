@@ -15,6 +15,11 @@ from .constants import (
 )
 from .gradients import translate_gradients
 
+_GRADIENT_VALUE_RE = re.compile(
+    r"\b(?:q(?:linear|radial|conical)gradient|(?:linear|radial|conic)-gradient)\s*\(",
+    re.IGNORECASE,
+)
+
 
 def _normalize_prop(name: str) -> str:
     """Map an aliased property name to its canonical form."""
@@ -99,6 +104,11 @@ def _should_strip_prop(prop: str, animated_props: set[str]) -> bool:
         return any(lh in animated_props for lh in border_longhands)
     longhands: list[str] | None = SHORTHAND_SIDES.get(prop)
     return bool(longhands and any(lh in animated_props for lh in longhands))
+
+
+def _is_static_gradient_prop(prop: str, value: str) -> bool:
+    """True for gradient backgrounds, which Qt can render statically but we cannot interpolate."""
+    return prop == "background-color" and _GRADIENT_VALUE_RE.search(value) is not None
 
 
 def _split_selector(selector: str) -> tuple[str, frozenset[str]]:
@@ -386,8 +396,13 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
             if p_name in ("box-shadow", "cursor"):
                 continue
 
-            # Strip if pseudo-state block AND (transition: all covers everything, or prop is animated)
-            if pseudo_set and ("all" in animated_props or _should_strip_prop(p_name, animated_props)):
+            # Strip if pseudo-state block AND (transition: all covers everything, or prop is animated).
+            # Gradient backgrounds are static-only Qt brushes; keep them in QSS so Qt can snap them.
+            if (
+                pseudo_set
+                and not _is_static_gradient_prop(p_name, p_val)
+                and ("all" in animated_props or _should_strip_prop(p_name, animated_props))
+            ):
                 continue  # Strip!
 
             new_body_lines.append(f"    {p_name}: {p_val};")
