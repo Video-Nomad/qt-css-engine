@@ -583,8 +583,24 @@ def test_content_box_qframe_uses_contents_rect_delta(_app: QApplication) -> None
     raw = label.width()
     actual = content_box_px(label, {}, "width", raw)
     cr = label.contentsRect()
-    expected = raw - max(0, raw - cr.width())
+    expected = raw - (raw - cr.width())
     assert actual == expected
+    destroy(label)
+
+
+def test_content_box_qframe_allows_negative_padding_delta(_app: QApplication) -> None:
+    """Negative QSS padding expands QFrame contentsRect(); content_box_px must preserve that signed delta."""
+    label = QLabel("hello")
+    label.setStyleSheet("padding-left: -10px; padding-right: -10px; border: 0px; margin: 0px;")
+    label.resize(100, 30)
+    label.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    label.show()
+    _app.processEvents()
+
+    actual = content_box_px(label, {}, "width", label.width())
+
+    assert label.contentsRect().width() == 120
+    assert actual == 120
     destroy(label)
 
 
@@ -602,6 +618,22 @@ def test_content_box_non_qframe_uses_base_props(_app: QApplication) -> None:
     actual = content_box_px(btn, base_props, "width", 100)
     # 100 - (1+1) - (5+5) - (2+2) = 84
     assert actual == 100 - 2 - 10 - 4
+    destroy(btn)
+
+
+def test_content_box_non_qframe_allows_negative_padding_props(_app: QApplication) -> None:
+    """For non-QFrame widgets, signed padding props should increase the derived content size."""
+    btn = QPushButton("hi")
+    base_props = {
+        "padding-left": "-5px",
+        "padding-right": "-7px",
+        "border-left-width": "0px",
+        "border-right-width": "0px",
+    }
+
+    actual = content_box_px(btn, base_props, "width", 100)
+
+    assert actual == 112
     destroy(btn)
 
 

@@ -441,9 +441,9 @@ def content_box_px(widget: QWidget, base_props: dict[str, str], prop: str, pixel
     if isinstance(widget, QFrame):
         cr = widget.contentsRect()
         if "width" in prop:
-            extras = max(0, widget.width() - cr.width())
+            extras = widget.width() - cr.width()
         else:
-            extras = max(0, widget.height() - cr.height())
+            extras = widget.height() - cr.height()
         return pixel_value - extras
     if "width" in prop:
         b = total_border_px(widget, base_props, "left") + total_border_px(widget, base_props, "right")
