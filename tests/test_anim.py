@@ -2443,15 +2443,30 @@ def test_generic_animation_negative_clamped_in_stylesheet(_app: QApplication) ->
     """
     widget = QWidget()
     ctx = WidgetContext()
-    anim = GenericPropertyAnimation(widget, "padding-top", 10.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
+    anim = GenericPropertyAnimation(widget, "min-width", 10.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
     anim.set_target("5px")
 
     # Simulate overshoot: the animation value goes below 0
     anim._on_tick(-3.0)
 
     assert anim.current_val == -3.0, "current_val must stay unclamped"
-    stored = ctx.css_anim_props.get("padding-top", "")
+    stored = ctx.css_anim_props.get("min-width", "")
     assert stored.startswith("0.000px"), f"expected clamped 0, got {stored!r}"
+
+    destroy(widget)
+
+
+def test_generic_animation_snap_clamps_non_negative_prop(_app: QApplication) -> None:
+    """Snap paths must clamp non-negative props the same way animation ticks do."""
+    widget = QWidget()
+    ctx = WidgetContext()
+    anim = GenericPropertyAnimation(widget, "min-width", 10.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
+
+    anim.snap_to("-5px")
+
+    assert anim.current_val == -5.0, "current_val must stay unclamped"
+    stored = ctx.css_anim_props.get("min-width", "")
+    assert stored == "0.000px", f"expected clamped 0, got {stored!r}"
 
     destroy(widget)
 

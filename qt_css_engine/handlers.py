@@ -558,7 +558,7 @@ class GenericPropertyAnimation(QObject):
             self.unit = unit
             self.current_val = self._effective_target_value(raw_val, unit, box_size)
             self._anim_origin_val = self.current_val
-            written = self.current_val
+            written = max(0.0, self.current_val) if self.prop in NON_NEGATIVE_PROPS else self.current_val
             if self.prop in BORDER_RADIUS_PROPS:
                 written = clamp_border_radius(
                     self.widget,
