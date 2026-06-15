@@ -1,15 +1,14 @@
 import itertools
 import math
 import re
+from collections.abc import Callable
+from typing import Any
 
 from .qt_compat.QtCore import QEasingCurve, QPointF
 from .qt_compat.QtGui import QColor
 from .qt_compat.QtWidgets import (
-    QApplication,
-    QFrame,
     QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
-    QStyle,
     QWidget,
 )
 from .types import ShadowParams
@@ -368,101 +367,6 @@ def apply_shadow_to_widget(widget: QWidget, params: ShadowParams | None, priorit
     widget.setGraphicsEffect(shadow)
 
 
-# Layout helpers
-
-
-def padding_side_px(base_props: dict[str, str], side: str) -> int:
-    """Return the QSS padding in pixels for one side ('left', 'right', 'top', 'bottom')."""
-    raw = base_props.get(f"padding-{side}") or base_props.get("padding") or "0"
-    v = parse_css_val(raw)
-    return int(v) if isinstance(v, (int, float)) else 0
-
-
-def margin_side_px(base_props: dict[str, str], side: str) -> int:
-    """Return the QSS margin in pixels for one side ('left', 'right', 'top', 'bottom')."""
-    raw = base_props.get(f"margin-{side}") or base_props.get("margin") or "0"
-    v = parse_css_val(raw)
-    return int(v) if isinstance(v, (int, float)) else 0
-
-
-def _border_side_px(base_props: dict[str, str], side: str) -> int:
-    """Return the QSS border width in pixels for one side ('left', 'right', 'top', 'bottom')."""
-    raw = base_props.get(f"border-{side}-width") or base_props.get("border-width") or "0"
-    v = parse_css_val(raw)
-    return int(v) if isinstance(v, (int, float)) else 0
-
-
-def total_border_px(widget: QWidget, base_props: dict[str, str], side: str) -> int:
-    """
-    Return the effective border width for one side, accounting for native platform borders.
-
-    When any border property is present in QSS, QStyleSheetStyle controls border drawing and
-    the QSS value is authoritative (may be 0 for 'border: none').
-    When no border property is in QSS at all, the native platform border is used:
-    - QFrame subclasses: use widget.frameWidth() — reflects the actual frame drawn (0 for NoFrame).
-      PM_DefaultFrameWidth is a style-level metric that does not match the actual rendered frame for
-      widgets like QLabel (NoFrame), causing the natural-size calculation to undercount by PM_DefaultFrameWidth
-      per side and producing a snap at animation end.
-    - Other widgets (QPushButton, QLineEdit, …): use PM_DefaultFrameWidth as before.
-
-    Qt's contentsMargins() tracks only QSS padding, so contentsRect() = content + effective_border.
-    Subtracting this value gives the true CSS content-box size that min-width/max-width operate on.
-    """
-    if any(k.startswith("border") for k in base_props):
-        return _border_side_px(base_props, side)
-    if isinstance(widget, QFrame):
-        return max(0, widget.frameWidth())
-    style = widget.style() or QApplication.style()
-    if style is None:
-        return 0
-    fw = style.pixelMetric(QStyle.PixelMetric.PM_DefaultFrameWidth, None, widget)
-    return max(0, fw)
-
-
-def content_box_px(widget: QWidget, base_props: dict[str, str], prop: str, pixel_value: int) -> int:
-    """
-    Subtract border+padding+margin from a raw pixel size to get the content-area size.
-
-    ``prop`` must contain ``"width"`` or ``"height"`` to select the axis.
-    The result may be negative if box-model extras exceed ``pixel_value``; callers clamp as needed.
-
-    For QFrame-derived widgets (QLabel, QFrame, …) Qt reflects the full QSS box-model
-    (border + padding + margin) in widget.contentsRect(); we trust that delta directly.
-    Reading the same values from base_props would double-count, because QLabel's frameWidth()
-    already bakes padding+margin into the frame.
-
-    For non-QFrame widgets (QPushButton, QLineEdit, …) contentsRect() does NOT reflect QSS
-    padding/border, so we compute from the CSS values plus PM_DefaultFrameWidth for the
-    native frame when no border is declared.
-
-    Note: Qt's layout operates in integer logical pixels, so this calculation should be exact in practice
-    even under fractional OS scaling.
-    """
-    if isinstance(widget, QFrame):
-        cr = widget.contentsRect()
-        if "width" in prop:
-            extras = widget.width() - cr.width()
-        else:
-            extras = widget.height() - cr.height()
-        return pixel_value - extras
-    if "width" in prop:
-        b = total_border_px(widget, base_props, "left") + total_border_px(widget, base_props, "right")
-        p = padding_side_px(base_props, "left") + padding_side_px(base_props, "right")
-        m = margin_side_px(base_props, "left") + margin_side_px(base_props, "right")
-    else:
-        b = total_border_px(widget, base_props, "top") + total_border_px(widget, base_props, "bottom")
-        p = padding_side_px(base_props, "top") + padding_side_px(base_props, "bottom")
-        m = margin_side_px(base_props, "top") + margin_side_px(base_props, "bottom")
-    return pixel_value - b - p - m
-
-
-def get_preferred_size_fallback(widget: QWidget, base_props: dict[str, str], prop: str) -> str:
-    """Return the widget's natural size as a CSS pixel value for the given size property."""
-    hint = widget.sizeHint()
-    px = hint.width() if "width" in prop else hint.height()
-    return f"{max(0, content_box_px(widget, base_props, prop, px))}px"
-
-
 def update_shadow_ancestor(widget: QWidget) -> None:
     """Force a full repaint on the nearest ancestor with a QGraphicsEffect.
 
@@ -479,3 +383,14 @@ def update_shadow_ancestor(widget: QWidget) -> None:
             w.update()
             return
         w = w.parentWidget()
+
+
+def safe_disconnect(signal: Any, callback: Callable[..., Any] | None = None) -> None:
+    """Safely disconnect a signal from a slot."""
+    try:
+        if callback is not None:
+            signal.disconnect(callback)
+        else:
+            signal.disconnect()
+    except RuntimeError, TypeError:
+        pass

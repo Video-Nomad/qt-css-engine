@@ -3,6 +3,7 @@ from collections.abc import Callable
 
 from qt_css_engine.constants import BORDER_RADIUS_PROPS, NON_NEGATIVE_PROPS, SIZE_PROPS
 
+from .layout_measure import margin_side_px, padding_side_px, total_border_px
 from .qt_compat import is_qobject_alive
 from .qt_compat.QtCore import QEasingCurve, QObject, QVariantAnimation
 from .qt_compat.QtGui import QColor
@@ -13,15 +14,12 @@ from .utils import (
     apply_shadow_to_widget,
     interpolate_oklab,
     lerp_shadow,
-    margin_side_px,
-    padding_side_px,
     parse_box_shadow,
     parse_color,
     parse_css_numeric,
     parse_css_val,
     scoped_anim_style,
     shadow_as_transparent,
-    total_border_px,
     update_shadow_ancestor,
 )
 

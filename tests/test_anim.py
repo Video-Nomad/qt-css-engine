@@ -1,12 +1,14 @@
 # pyright: reportPrivateUsage=false
 # pyright: reportUnknownMemberType=false
 
+from collections.abc import Callable
+
 import pytest
 from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
 from qt_css_engine.css_parser import extract_rules
-from qt_css_engine.engine import _CUBIC_BEZIER_RE, _STEPS_RE
+from qt_css_engine.easing import CUBIC_BEZIER_RE, STEPS_RE
 from qt_css_engine.handlers import (
     BoxShadowHandle,
     ColorAnimation,
@@ -14,6 +16,7 @@ from qt_css_engine.handlers import (
     OpacityAnimation,
     clamp_border_radius,
 )
+from qt_css_engine.matcher import RuleMatcher
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QSize, Qt
 from qt_css_engine.qt_compat.QtGui import QColor
@@ -1121,9 +1124,9 @@ def test_subcontrol_rules_not_added_to_quick_filters() -> None:
         .results-list-view::item { background-color: transparent; transition: background 0.3s ease; }
         .results-list-view::item:hover { background-color: rgba(128, 130, 158, 0.1); }
     """)
-    assert "results-list-view" not in engine._animated_classes
-    assert not engine._animated_tags
-    assert not engine._animated_ids
+    assert "results-list-view" not in engine._matcher.animated_classes
+    assert not engine._matcher.animated_tags
+    assert not engine._matcher.animated_ids
 
 
 def test_subcontrol_sibling_rule_still_animates(_app: QApplication) -> None:
@@ -1418,9 +1421,9 @@ def test_transition_engine_event_filter_pseudos(_app: QApplication) -> None:
     destroy(widget)
 
 
-def test_transition_engine_hierarchy_matches() -> None:
-    # Assuming testing _matches traverses hierarchy properly
-    engine = make_engine(".parent .child { background-color: blue; }")
+def test_transition_engine_hierarchy_matches(make_matcher: Callable[[str], RuleMatcher]) -> None:
+    # Assuming testing matches traverses hierarchy properly
+    matcher = make_matcher(".parent .child { background-color: blue; }")
 
     parent = QWidget()
     parent.setProperty("class", "parent")
@@ -1428,8 +1431,8 @@ def test_transition_engine_hierarchy_matches() -> None:
     child = QWidget(parent)
     child.setProperty("class", "child")
 
-    assert engine._matches(child, engine.rules[0]) is True
-    assert engine._matches(parent, engine.rules[0]) is False
+    assert matcher.matches(child, matcher.rules[0]) is True
+    assert matcher.matches(parent, matcher.rules[0]) is False
 
     # Extra test: false match
     fake_parent = QWidget()
@@ -1437,7 +1440,7 @@ def test_transition_engine_hierarchy_matches() -> None:
     child2 = QWidget(fake_parent)
     child2.setProperty("class", "child")
 
-    assert engine._matches(child2, engine.rules[0]) is False
+    assert matcher.matches(child2, matcher.rules[0]) is False
 
     destroy(child)
     destroy(parent)
@@ -1470,11 +1473,11 @@ def test_matching_rules_cache_respects_ancestry(_app: QApplication) -> None:
     child_b.setProperty("class", "child")
 
     # child_a must match the ancestor-dependent transition rule
-    rules_a = engine._matching_rules(child_a)
+    rules_a = engine._matcher.matching_rules(child_a)
     assert any(r.transitions for r in rules_a), "child_a (under parent-a) should match the transition rule"
 
     # child_b must NOT — evaluated AFTER child_a to trigger the cache-sharing bug if present
-    rules_b = engine._matching_rules(child_b)
+    rules_b = engine._matcher.matching_rules(child_b)
     assert not any(r.transitions for r in rules_b), "child_b (under parent-b) must not share child_a's cache entry"
 
     # Also verify animation behaviour is correct
@@ -1546,7 +1549,7 @@ def test_transition_all(_app: QApplication) -> None:
     ],
 )
 def test_cubic_bezier_regex_extracts_values(easing: str, expected: tuple[float, float, float, float]) -> None:
-    m = _CUBIC_BEZIER_RE.match(easing)
+    m = CUBIC_BEZIER_RE.match(easing)
     assert m is not None
     assert (float(m[1]), float(m[2]), float(m[3]), float(m[4])) == pytest.approx(expected)
 
@@ -1556,7 +1559,7 @@ def test_cubic_bezier_regex_extracts_values(easing: str, expected: tuple[float, 
     ["ease", "ease-in", "linear", "ease-in-out", "cubic_bezier(0.4, 0, 0.2, 1)", ""],
 )
 def test_cubic_bezier_regex_does_not_match_non_cubic(easing: str) -> None:
-    assert _CUBIC_BEZIER_RE.match(easing) is None
+    assert CUBIC_BEZIER_RE.match(easing) is None
 
 
 # ---------------------------------------------------------------------------
@@ -1782,13 +1785,13 @@ def test_make_steps_curve_returns_custom_type() -> None:
 
 
 def test_steps_regex_matches_basic() -> None:
-    assert _STEPS_RE.match("steps(4)")
-    assert _STEPS_RE.match("steps(3, jump-start)")
-    assert _STEPS_RE.match("steps(5, jump-end)")
-    assert _STEPS_RE.match("steps(2, jump-none)")
-    assert _STEPS_RE.match("steps(6, jump-both)")
-    assert _STEPS_RE.match("steps(1, start)")
-    assert _STEPS_RE.match("steps(1, end)")
+    assert STEPS_RE.match("steps(4)")
+    assert STEPS_RE.match("steps(3, jump-start)")
+    assert STEPS_RE.match("steps(5, jump-end)")
+    assert STEPS_RE.match("steps(2, jump-none)")
+    assert STEPS_RE.match("steps(6, jump-both)")
+    assert STEPS_RE.match("steps(1, start)")
+    assert STEPS_RE.match("steps(1, end)")
 
 
 def test_make_steps_jump_end_boundary_values() -> None:
@@ -2183,12 +2186,12 @@ def test_negative_delay_exceeds_duration_snaps(_app: QApplication) -> None:
 
 def test_cursor_has_cursor_rules_flag(_app: QApplication) -> None:
     engine = make_engine(".btn { cursor: pointer; }")
-    assert engine._has_cursor_rules is True
+    assert engine._matcher.has_cursor_rules is True
 
 
 def test_cursor_no_cursor_rules_flag(_app: QApplication) -> None:
     engine = make_engine(".btn { background-color: steelblue; }")
-    assert engine._has_cursor_rules is False
+    assert engine._matcher.has_cursor_rules is False
 
 
 def test_cursor_applied_on_hover(_app: QApplication) -> None:

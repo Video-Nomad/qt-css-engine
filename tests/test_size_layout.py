@@ -24,6 +24,7 @@ from pytestqt.qtbot import QtBot
 from qt_css_engine import TransitionEngine
 from qt_css_engine.css_parser import extract_rules
 from qt_css_engine.handlers import GenericPropertyAnimation
+from qt_css_engine.layout_measure import content_box_px, get_preferred_size_fallback
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, Qt
 from qt_css_engine.qt_compat.QtWidgets import (
@@ -36,7 +37,6 @@ from qt_css_engine.qt_compat.QtWidgets import (
     QWidget,
 )
 from qt_css_engine.types import EvaluationCause, InternalWriteReason
-from qt_css_engine.utils import content_box_px, get_preferred_size_fallback
 
 # ---------------------------------------------------------------------------
 # Helpers

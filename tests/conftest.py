@@ -1,11 +1,13 @@
 import gc
 import sys
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from typing import Any
 
 import pytest
 
 from qt_css_engine import TransitionEngine
+from qt_css_engine.css_parser import extract_rules
+from qt_css_engine.matcher import RuleMatcher
 from qt_css_engine.qt_compat.QtCore import QCoreApplication, QEvent
 from qt_css_engine.qt_compat.QtWidgets import QApplication
 
@@ -46,3 +48,13 @@ def cleanup_deferred_deletes(monkeypatch: pytest.MonkeyPatch) -> Generator[None]
     # Clear references to allow GC
     engines_in_test.clear()
     gc.collect()
+
+
+@pytest.fixture
+def make_matcher() -> Callable[[str], Any]:
+
+    def _make(css: str) -> RuleMatcher:
+        _, rules = extract_rules(css)
+        return RuleMatcher(rules)
+
+    return _make

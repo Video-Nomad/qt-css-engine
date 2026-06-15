@@ -29,6 +29,7 @@ from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
 from qt_css_engine.css_parser import extract_rules
+from qt_css_engine.easing import resolve_easing_curve
 from qt_css_engine.handlers import ColorAnimation, GenericPropertyAnimation
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QSize, Qt, QTimer
@@ -137,9 +138,9 @@ def test_id_selector_populates_animated_ids() -> None:
         #myBtn { background-color: steelblue; }
         #myBtn:hover { background-color: royalblue; transition: background-color 300ms; }
     """)
-    assert "myBtn" in engine._animated_ids
-    assert "myBtn" not in engine._animated_classes
-    assert "myBtn" not in engine._animated_tags
+    assert "myBtn" in engine._matcher.animated_ids
+    assert "myBtn" not in engine._matcher.animated_classes
+    assert "myBtn" not in engine._matcher.animated_tags
 
 
 def test_id_selector_should_evaluate_matches_objectname(_app: QApplication) -> None:
@@ -213,27 +214,24 @@ def test_id_with_class_selector_matches(_app: QApplication) -> None:
 
 
 def test_resolve_easing_curve_named_strings() -> None:
-    engine = make_engine(".x { color: red; }")
-    assert engine._resolve_easing_curve("ease").type() == QEasingCurve.Type.InOutQuad
-    assert engine._resolve_easing_curve("ease-in").type() == QEasingCurve.Type.InCubic
-    assert engine._resolve_easing_curve("ease-out").type() == QEasingCurve.Type.OutCubic
-    assert engine._resolve_easing_curve("ease-in-out").type() == QEasingCurve.Type.InOutCubic
-    assert engine._resolve_easing_curve("linear").type() == QEasingCurve.Type.Linear
+    assert resolve_easing_curve("ease").type() == QEasingCurve.Type.InOutQuad
+    assert resolve_easing_curve("ease-in").type() == QEasingCurve.Type.InCubic
+    assert resolve_easing_curve("ease-out").type() == QEasingCurve.Type.OutCubic
+    assert resolve_easing_curve("ease-in-out").type() == QEasingCurve.Type.InOutCubic
+    assert resolve_easing_curve("linear").type() == QEasingCurve.Type.Linear
 
 
 def test_resolve_easing_curve_unknown_falls_back_to_inoutquad() -> None:
-    engine = make_engine(".x { color: red; }")
-    assert engine._resolve_easing_curve("not-a-valid-easing").type() == QEasingCurve.Type.InOutQuad
+    assert resolve_easing_curve("not-a-valid-easing").type() == QEasingCurve.Type.InOutQuad
 
 
 def test_resolve_easing_curve_step_start_and_step_end() -> None:
-    engine = make_engine(".x { color: red; }")
-    c_start = engine._resolve_easing_curve("step-start")
+    c_start = resolve_easing_curve("step-start")
     assert c_start.type() == QEasingCurve.Type.Custom
     # step-start = steps(1, start): jumps to 1 immediately at t=0
     assert c_start.valueForProgress(0.0) == pytest.approx(1.0)
 
-    c_end = engine._resolve_easing_curve("step-end")
+    c_end = resolve_easing_curve("step-end")
     assert c_end.type() == QEasingCurve.Type.Custom
     # step-end = steps(1, end): stays at 0 until t=1
     assert c_end.valueForProgress(0.0) == pytest.approx(0.0)
@@ -1183,9 +1181,9 @@ def test_should_evaluate_true_with_active_animation_no_rule_match(_app: QApplica
     assert _has_anim(engine, widget, "background-color")
 
     # Clear all quick-filter sets to simulate "no rule ever matches anything"
-    engine._animated_classes.clear()
-    engine._animated_tags.clear()
-    engine._animated_ids.clear()
+    engine._matcher.animated_classes.clear()
+    engine._matcher.animated_tags.clear()
+    engine._matcher.animated_ids.clear()
 
     assert engine._should_evaluate(widget), "active animation must override quick-filter result"
     destroy(widget)
