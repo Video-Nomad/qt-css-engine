@@ -11,7 +11,7 @@ Targets the trickiest parts of the size pipeline that the larger refactor must p
   is_natural_target flag.
 - _resolve_current_raw: pre_polish_size snapshot, content_box_px conversion, css_anim_props
   precedence, base_raw fallback.
-- _apply_prop_animation: frozen-prop pre-freeze for size, natural-target early-return paths,
+- _apply_prop_animation: current-size resolution, natural-target early-return paths,
   post clean_on_finish reentry.
 - _cleanup_orphans: snap_to_natural for size props, snap_to for non-size.
 - content_box_px / get_preferred_size_fallback: QFrame vs non-QFrame, zero clamp.
@@ -36,7 +36,7 @@ from qt_css_engine.qt_compat.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qt_css_engine.types import EvaluationCause, InternalWriteReason
+from qt_css_engine.types import EvaluationCause, InternalWriteReason, ResolvedRuleState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -84,6 +84,33 @@ def test_natural_size_no_parent_layout_falls_back_to_preferred(_app: QApplicatio
     expected = get_preferred_size_fallback(widget, {}, "width")
     assert result == expected
     destroy(widget)
+
+
+def test_natural_measurement_does_not_leave_temporary_size_style(_app: QApplication) -> None:
+    """Natural-size measurement may use the current size without persisting an inline constraint."""
+    engine = make_engine(".x { transition: width 200ms; }")
+    parent = QWidget()
+    layout = QHBoxLayout(parent)
+    widget = QPushButton("hi", parent)
+    layout.addWidget(widget)
+    parent.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    parent.show()
+    parent.resize(400, 50)
+    _app.processEvents()
+
+    ctx = engine._ctx(widget)
+    needs_update = engine._apply_prop_animation(
+        widget,
+        ctx,
+        "width",
+        state=ResolvedRuleState(),
+        cause=EvaluationCause.PSEUDO_STATE,
+    )
+
+    assert needs_update is False
+    assert "width" not in ctx.css_anim_props
+    assert "width:" not in widget.styleSheet()
+    destroy(parent)
 
 
 def test_natural_size_internal_write_marker_set_during_measure(_app: QApplication) -> None:
@@ -418,15 +445,14 @@ def test_resolve_current_height_axis_uses_pre_polish_height(_app: QApplication) 
 
 
 # ---------------------------------------------------------------------------
-# _apply_prop_animation — frozen-prop logic
+# _apply_prop_animation — current-value and natural-target paths
 # ---------------------------------------------------------------------------
 
 
-def test_apply_prop_freezes_size_before_measure_when_no_anim(_app: QApplication) -> None:
+def test_apply_prop_does_not_leave_temporary_size_state_when_no_anim(_app: QApplication) -> None:
     """
-    When prop is a SIZE_PROP, no animation exists, and prop not in css_anim_props,
-    _apply_prop_animation freezes current size into css_anim_props before any measurement.
-    The freeze should be removed when target == base value (snap-skip path).
+    A size evaluation with no animation must not need a temporary css_anim_props entry.
+    When target == base value, the snap-skip path leaves the context untouched.
     """
     engine = make_engine("""
         .x { width: 50px; transition: width 200ms; }
@@ -438,18 +464,16 @@ def test_apply_prop_freezes_size_before_measure_when_no_anim(_app: QApplication)
 
     # Re-evaluate with no pseudo state and no class-change.
     # Target == base width == 50px. With no anim and no inline value, snap-skip path runs
-    # and the frozen prop is removed before return.
+    # without creating an inline value first.
     engine._apply_prop_animation(
         widget,
         ctx,
         "width",
-        base_props={"width": "50px"},
-        target_props={"width": "50px"},
-        target_transitions={},
+        state=ResolvedRuleState(base_props={"width": "50px"}, target_props={"width": "50px"}),
         cause=EvaluationCause.PSEUDO_STATE,
     )
 
-    assert "width" not in ctx.css_anim_props, "frozen prop must be cleaned up on snap-skip"
+    assert "width" not in ctx.css_anim_props
     destroy(widget)
 
 
@@ -467,9 +491,7 @@ def test_apply_prop_natural_target_no_anim_returns_false(_app: QApplication) -> 
         widget,
         ctx,
         "width",
-        base_props={},
-        target_props={},
-        target_transitions={},
+        state=ResolvedRuleState(),
         cause=EvaluationCause.PSEUDO_STATE,
     )
     assert needs_update is False
@@ -503,9 +525,7 @@ def test_apply_prop_post_clean_on_finish_skips_restart(_app: QApplication) -> No
         widget,
         ctx,
         "width",
-        base_props={},  # natural target — no width in base/target
-        target_props={},
-        target_transitions={},
+        state=ResolvedRuleState(),  # natural target — no width in base/target
         cause=EvaluationCause.CLASS_ANIMATION_FINISH,
     )
     assert needs_update is False, "post-clean_on_finish must not restart animation toward sizeHint"
@@ -529,7 +549,7 @@ def test_cleanup_orphan_size_prop_uses_snap_to_natural(_app: QApplication) -> No
     anim = GenericPropertyAnimation(widget, "width", 100.0, 200, QEasingCurve.Type.Linear, parent=engine, ctx=ctx)
     ctx.active_animations["width"] = anim
 
-    needs_update = engine._cleanup_orphans(widget, ctx, all_animated_props=set(), base_props={})
+    needs_update = engine._cleanup_orphans(ctx, ResolvedRuleState())
 
     assert "width" not in ctx.css_anim_props, "snap_to_natural must remove inline constraint"
     assert "width" not in ctx.active_animations, "orphan animation must be removed from registry"
@@ -546,7 +566,7 @@ def test_cleanup_orphan_size_prop_with_base_value_snaps_to_value(_app: QApplicat
     anim = GenericPropertyAnimation(widget, "width", 100.0, 200, QEasingCurve.Type.Linear, parent=engine, ctx=ctx)
     ctx.active_animations["width"] = anim
 
-    needs_update = engine._cleanup_orphans(widget, ctx, all_animated_props=set(), base_props={"width": "50px"})
+    needs_update = engine._cleanup_orphans(ctx, ResolvedRuleState(base_props={"width": "50px"}))
 
     assert ctx.css_anim_props.get("width", "").startswith("50"), "orphan must snap to explicit base value, not natural"
     assert needs_update is True
@@ -560,7 +580,7 @@ def test_cleanup_stale_snapped_props_evicted(_app: QApplication) -> None:
     ctx = engine._ctx(widget)
     ctx.css_anim_props["min-width"] = "100.000px"  # stale snap, no animation, no rule
 
-    needs_update = engine._cleanup_orphans(widget, ctx, all_animated_props=set(), base_props={})
+    needs_update = engine._cleanup_orphans(ctx, ResolvedRuleState())
     assert "min-width" not in ctx.css_anim_props
     assert needs_update is True
     destroy(widget)

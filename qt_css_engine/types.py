@@ -7,6 +7,7 @@ from .qt_compat.QtCore import QTimer
 from .qt_compat.QtGui import QColor
 
 if TYPE_CHECKING:
+    from .css_parser import TransitionSpec
     from .handlers import BoxShadowHandle, ColorAnimation, GenericPropertyAnimation, OpacityAnimation
 
 Animation = Union["ColorAnimation", "OpacityAnimation", "GenericPropertyAnimation", "BoxShadowHandle"]
@@ -41,6 +42,16 @@ class EvaluationCause(Enum):
         return self is EvaluationCause.CLICKED_ACTIVATION
 
 
+@dataclass
+class ResolvedRuleState:
+    """CSS values and transitions selected for one widget evaluation."""
+
+    base_props: dict[str, str] = field(default_factory=dict)
+    target_props: dict[str, str] = field(default_factory=dict)
+    transitions: dict[str, TransitionSpec] = field(default_factory=dict)
+    animated_props: set[str] = field(default_factory=set)
+
+
 class InternalWriteReason(Enum):
     """Why the engine is temporarily suppressing event evaluation during internal mutations."""
 
@@ -52,9 +63,9 @@ class InternalWriteReason(Enum):
 class WidgetContext:
     """Per-widget state tracked by the transition engine."""
 
-    active_pseudos: set[str] = field(default_factory=lambda: set[str]())
-    css_anim_props: dict[str, str] = field(default_factory=lambda: dict[str, str]())
-    active_animations: dict[str, Animation] = field(default_factory=lambda: dict[str, Animation]())
+    active_pseudos: set[str] = field(default_factory=set)
+    css_anim_props: dict[str, str] = field(default_factory=dict)
+    active_animations: dict[str, Animation] = field(default_factory=dict)
     internal_write_depth: int = 0
     internal_write_reason: InternalWriteReason | None = None
     pre_polish_size: tuple[int, int] | None = None
@@ -64,21 +75,19 @@ class WidgetContext:
     class_anim_gen: int = 0
     # Per-property delay timers scheduled by transition-delay declarations.
     # Cancelled whenever the widget state changes before the timer fires.
-    pending_delays: dict[str, QTimer] = field(default_factory=lambda: dict[str, QTimer]())
+    pending_delays: dict[str, QTimer] = field(default_factory=dict)
     # Last cursor value applied via setCursor() — None means unsetCursor() (Qt default).
     applied_cursor: str | None = None
     # Per-property class-anim finished callbacks stored so they can be disconnected before
     # reconnecting — prevents accumulation of stale closures on rapid class changes.
-    class_anim_callbacks: dict[str, Callable[[], None]] = field(default_factory=lambda: dict[str, Callable[[], None]]())
+    class_anim_callbacks: dict[str, Callable[[], None]] = field(default_factory=dict)
     # :clicked forward-phase tracking — props we're waiting on before deactivating :clicked.
-    clicked_anim_props: set[str] = field(default_factory=lambda: set[str]())
+    clicked_anim_props: set[str] = field(default_factory=set)
     clicked_anim_gen: int = 0
-    clicked_anim_callbacks: dict[str, Callable[[], None]] = field(
-        default_factory=lambda: dict[str, Callable[[], None]]()
-    )
+    clicked_anim_callbacks: dict[str, Callable[[], None]] = field(default_factory=dict)
     # Last target rule props seen during evaluation. Batched flushes merge these with
     # css_anim_props so radius clamping can still see unchanged margin/border values.
-    style_box_props: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    style_box_props: dict[str, str] = field(default_factory=dict)
     # True while an inline stylesheet flush is queued for this widget.
     style_flush_pending: bool = False
     # True while class-change evaluation must synchronously restore inline animation styles.

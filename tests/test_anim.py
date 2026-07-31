@@ -109,7 +109,7 @@ class FixedHintWidget(QWidget):
 # ---------------------------------------------------------------------------
 
 
-def test_watch_widget_registered_on_first_animation(_app: QApplication) -> None:
+def test_context_created_on_first_animation(_app: QApplication) -> None:
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:hover { background-color: royalblue; transition: background-color 1000ms; }
@@ -117,15 +117,15 @@ def test_watch_widget_registered_on_first_animation(_app: QApplication) -> None:
     widget = QWidget()
     widget.setProperty("class", "box")
 
-    assert id(widget) not in engine._connected_widgets
+    assert id(widget) not in engine._contexts
     hover_widget(engine, widget)
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
 
     destroy(widget)
 
 
-def test_watch_widget_not_registered_without_animation(_app: QApplication) -> None:
-    """Widgets that only snap should still be registered so their context is cleaned up on destruction."""
+def test_context_created_without_running_animation(_app: QApplication) -> None:
+    """Widgets that only snap still get a context that is cleaned up on destruction."""
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:pressed { background-color: darkblue; transition: background-color 500ms; }
@@ -133,17 +133,16 @@ def test_watch_widget_not_registered_without_animation(_app: QApplication) -> No
     widget = QWidget()
     widget.setProperty("class", "box")
 
-    # hover with no hover-transition → only snap, but context is still allocated and must be watched
+    # Hover with no hover-transition → only snap, but context is still allocated.
     hover_widget(engine, widget)
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
 
     destroy(widget)
 
 
-def test_watch_widget_not_duplicated(_app: QApplication) -> None:
+def test_destroyed_cleanup_connection_is_not_duplicated(_app: QApplication) -> None:
     """Hovering multiple times must not register the destroyed signal twice.
-    If it did, _on_widget_destroyed would run twice on the second call it would
-    try to pop keys that no longer exist — the test verifies no error is raised."""
+    The context itself is the connection guard; destruction must remain idempotent."""
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:hover { background-color: royalblue; transition: background-color 1000ms; }
@@ -152,11 +151,10 @@ def test_watch_widget_not_duplicated(_app: QApplication) -> None:
     widget.setProperty("class", "box")
 
     hover_widget(engine, widget)
-    hover_widget(engine, widget)  # would double-connect without the guard in _watch_widget
+    hover_widget(engine, widget)
     hover_widget(engine, widget)
 
-    # shiboken6.delete triggers destroyed → _on_widget_destroyed runs; if double-connected
-    # it would run again on already-removed keys which would KeyError
+    # shiboken6.delete triggers destroyed → _on_widget_destroyed runs once.
     destroy(widget)  # must not raise
 
 
@@ -175,22 +173,6 @@ def test_widget_destroyed_removed_from_active_animations(_app: QApplication) -> 
 
     # After destroy, widget context should be cleaned up
     assert id(widget) not in engine._contexts
-
-
-def test_widget_destroyed_removed_from_watched(_app: QApplication) -> None:
-    engine = make_engine("""
-        .box { background-color: steelblue; }
-        .box:hover { background-color: royalblue; transition: background-color 1000ms; }
-    """)
-    widget = QWidget()
-    widget.setProperty("class", "box")
-    hover_widget(engine, widget)
-
-    assert id(widget) in engine._connected_widgets
-
-    destroy(widget)
-
-    assert id(widget) not in engine._connected_widgets
 
 
 def test_widget_destroyed_stops_running_animation(_app: QApplication) -> None:
@@ -508,8 +490,8 @@ def test_zero_duration_snaps_value_into_css_anim_props(_app: QApplication) -> No
     destroy(widget)
 
 
-def test_zero_duration_registers_watched_widget(_app: QApplication) -> None:
-    """Widget with zero-duration transition still gets registered so its context is cleaned up on destruction."""
+def test_zero_duration_creates_context(_app: QApplication) -> None:
+    """Widget with zero-duration transition still gets a context for cleanup."""
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:hover { background-color: royalblue; transition: background-color 0ms; }
@@ -518,7 +500,7 @@ def test_zero_duration_registers_watched_widget(_app: QApplication) -> None:
     widget.setProperty("class", "box")
     hover_widget(engine, widget)
 
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
     destroy(widget)
 
 
@@ -566,7 +548,6 @@ def test_id_reuse_no_ghost_animations(_app: QApplication) -> None:
     destroy(w1)
 
     assert not _anims(engine, w1)
-    assert id(w1) not in engine._connected_widgets
 
 
 # ---------------------------------------------------------------------------
@@ -1501,15 +1482,14 @@ def test_transition_engine_reload_rules(_app: QApplication) -> None:
     widget.setProperty("class", "box")
     hover_widget(engine, widget)
 
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
 
     # Reload rules
     _, new_rules = extract_rules(".box { background-color: blue; }")
     engine.reload_rules(new_rules)
 
-    # _connected_widgets must NOT be cleared: the destroyed-signal is still connected.
-    # Clearing without disconnecting would cause a double-connect on the next animation cycle.
-    assert id(widget) in engine._connected_widgets
+    # The context survives reload so the existing destroyed-signal connection remains live.
+    assert id(widget) in engine._contexts
     assert not any(ctx.active_animations for ctx in engine._contexts.values())
 
     _app.processEvents()  # Process the delayed timers
@@ -1613,13 +1593,10 @@ def test_reload_clears_snap_only_css_anim_props(_app: QApplication) -> None:
     destroy(widget)
 
 
-def test_reload_does_not_double_connect_destroyed_signal(_app: QApplication) -> None:
+def test_reload_reanimation_keeps_destroyed_cleanup_safe(_app: QApplication) -> None:
     """
-    reload_rules must NOT clear _connected_widgets without disconnecting signals.
-    If it does, the next animation cycle reconnects a second destroyed callback;
-    with N reloads the widget accumulates N+1 callbacks.  The observable invariant
-    is that after reload + re-animation + destroy, _on_widget_destroyed logic runs
-    cleanly (no double pop, no leftover keys).
+    Reanimation after reload must reuse the existing context connection. The observable
+    invariant is that destruction still cleans up without duplicate callbacks.
     """
     engine = make_engine("""
         .box { background-color: red; }
@@ -1628,23 +1605,21 @@ def test_reload_does_not_double_connect_destroyed_signal(_app: QApplication) -> 
     widget = QWidget()
     widget.setProperty("class", "box")
 
-    # First animation cycle — registers destroyed signal.
+    # First animation cycle — creates the context and its destroyed connection.
     hover_widget(engine, widget)
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
 
-    # Reload — _connected_widgets must NOT be cleared (signal is still live).
+    # Reload — the context and signal connection remain live.
     _, new_rules = extract_rules("""
         .box { background-color: red; }
         .box:hover { background-color: blue; transition: background-color 300ms; }
     """)
     engine.reload_rules(new_rules)
-    assert id(widget) in engine._connected_widgets, (
-        "_connected_widgets was cleared; next _connect_destroyed call will double-connect destroyed"
-    )
+    assert id(widget) in engine._contexts
 
     # Re-animate after reload.
     hover_widget(engine, widget)
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
 
     # Destroy — must not raise and must leave no stale engine state.
     destroy(widget)
@@ -2182,16 +2157,6 @@ def test_negative_delay_exceeds_duration_snaps(_app: QApplication) -> None:
 # ---------------------------------------------------------------------------
 # cursor property
 # ---------------------------------------------------------------------------
-
-
-def test_cursor_has_cursor_rules_flag(_app: QApplication) -> None:
-    engine = make_engine(".btn { cursor: pointer; }")
-    assert engine._matcher.has_cursor_rules is True
-
-
-def test_cursor_no_cursor_rules_flag(_app: QApplication) -> None:
-    engine = make_engine(".btn { background-color: steelblue; }")
-    assert engine._matcher.has_cursor_rules is False
 
 
 def test_cursor_applied_on_hover(_app: QApplication) -> None:

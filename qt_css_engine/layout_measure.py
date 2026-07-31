@@ -95,7 +95,13 @@ def get_preferred_size_fallback(widget: QWidget, base_props: dict[str, str], pro
     return f"{max(0, content_box_px(widget, base_props, prop, px))}px"
 
 
-def get_natural_size(widget: QWidget, ctx: WidgetContext, base_props: dict[str, str], prop: str) -> str:
+def get_natural_size(
+    widget: QWidget,
+    ctx: WidgetContext,
+    base_props: dict[str, str],
+    prop: str,
+    current_raw: str | None = None,
+) -> str:
     """
     Return the widget's unconstrained natural size for prop.
 
@@ -109,11 +115,19 @@ def get_natural_size(widget: QWidget, ctx: WidgetContext, base_props: dict[str, 
 
     Falls back to sizeHint()-based measurement when the widget has no parent layout.
     """
+    # ``current_raw`` is the rendered size resolved by the engine for this evaluation.  It is
+    # passed separately instead of being written into ``css_anim_props`` just to make the
+    # measurement work, so early-return paths cannot leave a stale inline style behind.
+    restore_props = dict(ctx.css_anim_props)
+    measure_props = dict(restore_props)
+    if prop not in measure_props and current_raw not in (None, "", "auto"):
+        measure_props[prop] = current_raw
+
     axis_props = {"width", "min-width", "max-width"} if "width" in prop else {"height", "min-height", "max-height"}
-    constrained = {k for k in axis_props if k in ctx.css_anim_props}
+    constrained = {k for k in axis_props if k in measure_props}
     if not constrained:
         return get_preferred_size_fallback(widget, base_props, prop)
-    stripped = {k: v for k, v in ctx.css_anim_props.items() if k not in constrained}
+    stripped = {k: v for k, v in measure_props.items() if k not in constrained}
     parent = widget.parentWidget()
     parent_layout = parent.layout() if parent is not None else None
 
@@ -158,7 +172,7 @@ def get_natural_size(widget: QWidget, ctx: WidgetContext, base_props: dict[str, 
         else:
             result = get_preferred_size_fallback(widget, base_props, prop)
     finally:
-        widget.setStyleSheet(scoped_anim_style(widget, ctx.css_anim_props))
+        widget.setStyleSheet(scoped_anim_style(widget, restore_props))
         # Restore the constrained geometry so there is no flash before animation starts.
         if parent_layout is not None:
             for w_ in ancestors:

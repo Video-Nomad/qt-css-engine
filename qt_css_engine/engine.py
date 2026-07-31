@@ -1,5 +1,6 @@
 import logging
 import os
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from .constants import (
@@ -26,7 +27,7 @@ from .matcher import RuleMatcher
 from .qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, Qt, QTimer
 from .qt_compat.QtGui import QMouseEvent
 from .qt_compat.QtWidgets import QAbstractButton, QApplication, QWidget
-from .types import Animation, EvaluationCause, InternalWriteReason, WidgetContext
+from .types import Animation, EvaluationCause, InternalWriteReason, ResolvedRuleState, WidgetContext
 from .utils import (
     apply_shadow_to_widget,
     parse_color,
@@ -90,8 +91,6 @@ class TransitionEngine(QObject):
         self._contexts: dict[int, WidgetContext] = {}
         # Widgets that have at least one :active rule — populated at Polish time for O(1) activate/deactivate.
         self._active_rule_widgets: dict[int, QWidget] = {}
-        # Widget IDs with a destroyed-signal connection (prevents double-connect).
-        self._connected_widgets: set[int] = set()
         # Checkable widget IDs already connected to toggled signal.
         self._connected_checkable_ids: set[int] = set()
 
@@ -132,7 +131,7 @@ class TransitionEngine(QObject):
         if ctx is None:
             ctx = WidgetContext()
             self._contexts[wid] = ctx
-            self._connect_destroyed(widget)
+            widget.destroyed.connect(lambda: self._on_widget_destroyed(widget))
         return ctx
 
     # -------------------------------------------------------------------------
@@ -164,27 +163,29 @@ class TransitionEngine(QObject):
             # Force-clear :hover/:pressed if focus is shifted to a popup window.
             self._on_window_deactivate(watched, clear_active=False)
         elif t in PSEUDO_EVENTS:
-            if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
-                if isinstance(event, QMouseEvent) and event.button() != Qt.MouseButton.LeftButton:
-                    if self._left_click_only:
-                        return False
-                    ts = event.timestamp()
-                    if ts == self._claimed_mouse_event_ts:
-                        return False
-                    if not self._should_evaluate(watched):
-                        return False
-                    self._claimed_mouse_event_ts = ts
-            ctx = self._ctx(watched)
-            updated = self._update_pseudos(ctx.active_pseudos, t)
-            cause = EvaluationCause.PSEUDO_STATE
-            if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
-                cause = self._prepare_clicked(watched, ctx, updated)
-            if updated != ctx.active_pseudos:
-                ctx.active_pseudos = updated
-                self._evaluate_widget_state(watched, cause=cause)
-                if cause is EvaluationCause.CLICKED_ACTIVATION:
-                    self._finish_clicked_activation(watched, ctx)
+            self._on_pseudo_event(watched, event, t)
         return False
+
+    def _on_pseudo_event(self, widget: QWidget, event: QEvent, event_type: QEvent.Type) -> None:
+        """Update one widget's pseudo-state and evaluate any resulting transition."""
+        is_mouse_press = event_type in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick)
+        if is_mouse_press and isinstance(event, QMouseEvent) and event.button() != Qt.MouseButton.LeftButton:
+            if self._left_click_only:
+                return
+            timestamp = event.timestamp()
+            if timestamp == self._claimed_mouse_event_ts or not self._should_evaluate(widget):
+                return
+            self._claimed_mouse_event_ts = timestamp
+
+        ctx = self._ctx(widget)
+        updated = self._update_pseudos(ctx.active_pseudos, event_type)
+        cause = self._prepare_clicked(widget, ctx, updated) if is_mouse_press else EvaluationCause.PSEUDO_STATE
+        if updated == ctx.active_pseudos:
+            return
+        ctx.active_pseudos = updated
+        self._evaluate_widget_state(widget, cause=cause)
+        if cause is EvaluationCause.CLICKED_ACTIVATION:
+            self._finish_clicked_activation(widget, ctx)
 
     def _on_polish(self, widget: QWidget) -> None:
         """Handle Polish events — evaluate initial widget state on first polish."""
@@ -434,17 +435,9 @@ class TransitionEngine(QObject):
     # Widget lifecycle tracking
     # -------------------------------------------------------------------------
 
-    def _connect_destroyed(self, widget: QWidget) -> None:
-        """Connect widget.destroyed to the cleanup handler (idempotent)."""
-        if id(widget) in self._connected_widgets:
-            return
-        self._connected_widgets.add(id(widget))
-        widget.destroyed.connect(lambda: self._on_widget_destroyed(widget))
-
     def _on_widget_destroyed(self, widget: QWidget) -> None:
         """Remove all engine state for a destroyed widget and stop its animations."""
         wid = id(widget)
-        self._connected_widgets.discard(wid)
         self._connected_checkable_ids.discard(wid)
         self._matcher.rule_cache.pop(wid, None)
         self._active_rule_widgets.pop(wid, None)
@@ -452,32 +445,37 @@ class TransitionEngine(QObject):
         if ctx is None:
             return
         event_logger.debug("On widget destroyed: %s, %s", widget.__class__, wid)
-        for timer in ctx.pending_delays.values():
-            try:
-                timer.stop()
-                timer.deleteLater()
-            except RuntimeError, TypeError:
-                pass
-            safe_disconnect(timer.timeout)
-        ctx.pending_delays.clear()
-        for prop, cb in ctx.class_anim_callbacks.items():
-            if (anim_obj := ctx.active_animations.get(prop)) is not None:
-                try:
-                    anim_obj.anim.finished.disconnect(cb)
-                except RuntimeError, TypeError:
-                    pass
-        ctx.class_anim_callbacks.clear()
-        for prop, cb in ctx.clicked_anim_callbacks.items():
-            if (anim_obj := ctx.active_animations.get(prop)) is not None:
-                try:
-                    anim_obj.anim.finished.disconnect(cb)
-                except RuntimeError, TypeError:
-                    pass
-        ctx.clicked_anim_callbacks.clear()
+        self._cancel_all_pending_delays(ctx)
+        self._disconnect_finished_callbacks(ctx, ctx.class_anim_callbacks)
+        self._disconnect_finished_callbacks(ctx, ctx.clicked_anim_callbacks)
+        ctx.class_anim_props.clear()
         ctx.clicked_anim_props.clear()
+        self._stop_animations(ctx)
+
+    def _cancel_all_pending_delays(self, ctx: WidgetContext) -> None:
+        """Cancel every delayed transition currently held by a widget."""
+        for prop in list(ctx.pending_delays):
+            self._cancel_pending_delay(ctx, prop)
+
+    @staticmethod
+    def _disconnect_finished_callbacks(ctx: WidgetContext, callbacks: dict[str, Callable[[], None]]) -> None:
+        """Disconnect callbacks held for animations that are about to be discarded."""
+        for prop, callback in callbacks.items():
+            anim_obj = ctx.active_animations.get(prop)
+            if anim_obj is not None:
+                safe_disconnect(anim_obj.anim.finished, callback)
+        callbacks.clear()
+
+    def _stop_animations(self, ctx: WidgetContext, *, clear_effects: bool = False) -> None:
+        """Stop and release all animation objects in a widget context."""
         for anim_obj in ctx.active_animations.values():
             try:
                 anim_obj.anim.stop()
+                if clear_effects:
+                    if isinstance(anim_obj, BoxShadowHandle):
+                        apply_shadow_to_widget(anim_obj.widget, None, self.effect_priority)
+                    elif isinstance(anim_obj, OpacityAnimation):
+                        anim_obj.widget.setGraphicsEffect(None)
                 anim_obj.deleteLater()
             except RuntimeError:
                 pass
@@ -505,26 +503,21 @@ class TransitionEngine(QObject):
             ):
                 return
 
-        (
-            base_props,
-            target_props,
-            target_transitions,
-            all_animated_props,
-        ) = self._collect_rule_state(widget, ctx)
-        ctx.style_box_props = dict(target_props)
+        state = self._collect_rule_state(widget, ctx)
+        ctx.style_box_props = dict(state.target_props)
         old_immediate = ctx.style_flush_immediate
         ctx.style_flush_immediate = old_immediate or cause.is_class_driven
         try:
             needs_style_update = False
-            for prop in all_animated_props:
-                if self._apply_prop_animation(widget, ctx, prop, base_props, target_props, target_transitions, cause):
+            for prop in state.animated_props:
+                if self._apply_prop_animation(widget, ctx, prop, state, cause):
                     needs_style_update = True
-            if self._cleanup_orphans(widget, ctx, all_animated_props, base_props):
+            if self._cleanup_orphans(ctx, state):
                 needs_style_update = True
             if needs_style_update:
                 event_logger.debug("Updating style: %s", widget)
                 self._flush_widget_style_now(widget, ctx)
-            self._apply_cursor(widget, ctx, target_props)
+            self._apply_cursor(widget, ctx, state.target_props)
         finally:
             ctx.style_flush_immediate = old_immediate
 
@@ -575,77 +568,68 @@ class TransitionEngine(QObject):
     def _expand_all_transitions(
         self,
         ctx: WidgetContext,
-        all_animated_props: set[str],
-        base_props: dict[str, str],
-        target_props: dict[str, str],
-        target_transitions: dict[str, TransitionSpec],
+        state: ResolvedRuleState,
     ) -> None:
         """Expand `transition: all` to every animatable property present."""
-        all_spec = target_transitions.pop("all", None)
-        all_animated_props.discard("all")
-        for p in set(base_props) | set(target_props):
+        all_spec = state.transitions.pop("all", None)
+        state.animated_props.discard("all")
+        for p in set(state.base_props) | set(state.target_props):
             if self._is_animatable(p):
-                all_animated_props.add(p)
-                if p not in target_transitions and all_spec is not None:
-                    target_transitions[p] = all_spec
+                state.animated_props.add(p)
+                if p not in state.transitions and all_spec is not None:
+                    state.transitions[p] = all_spec
         # Engine-managed props set by a prior class-change may be absent from current rules.
         if all_spec is not None:
             engine_managed: set[str] = set(ctx.css_anim_props) | set(ctx.active_animations)
             for p in engine_managed:
-                if p not in all_animated_props and self._is_animatable(p) and p not in EFFECT_PROPS:
-                    all_animated_props.add(p)
-                    target_transitions[p] = all_spec
+                if p not in state.animated_props and self._is_animatable(p) and p not in EFFECT_PROPS:
+                    state.animated_props.add(p)
+                    state.transitions[p] = all_spec
 
-    def _collect_border_radius_props(
-        self, widget: QWidget, ctx: WidgetContext, target_props: dict[str, str], all_animated_props: set[str]
-    ) -> None:
+    def _collect_border_radius_props(self, widget: QWidget, ctx: WidgetContext, state: ResolvedRuleState) -> None:
         """Collect static border-radius properties that need clamping."""
         for p in BORDER_RADIUS_PROPS:
-            if p in target_props and (
-                self._needs_qt_border_radius_clamp(widget, target_props, p) or p in ctx.css_anim_props
+            if p in state.target_props and (
+                self._needs_qt_border_radius_clamp(widget, state.target_props, p) or p in ctx.css_anim_props
             ):
-                all_animated_props.add(p)
+                state.animated_props.add(p)
 
-    def _collect_rule_state(
-        self, widget: QWidget, ctx: WidgetContext
-    ) -> tuple[dict[str, str], dict[str, str], dict[str, TransitionSpec], set[str]]:
+    def _collect_rule_state(self, widget: QWidget, ctx: WidgetContext) -> ResolvedRuleState:
         """
         Evaluate the CSS cascade for widget.
 
-        Returns (base_props, target_props, target_transitions, all_animated_props).
+        The returned state contains the base/target cascade, the transitions selected for the
+        active pseudo state, and the properties that need engine handling.
         """
-        base_props: dict[str, str] = {}
-        target_props: dict[str, str] = {}
-        target_transitions: dict[str, TransitionSpec] = {}
+        state = ResolvedRuleState()
         trans_priority: dict[str, int] = {}
-        all_animated_props: set[str] = set()
         pseudos = ctx.active_pseudos
         for rule in self._matcher.matching_rules(widget):
             rule_in_target = not rule.pseudo_set or rule.pseudo_set <= pseudos
             priority = sum(self.pseudo_priority.get(p, 0) for p in rule.pseudo_set) if rule_in_target else -1
             for trans in rule.transitions:
-                all_animated_props.add(trans.prop)
+                state.animated_props.add(trans.prop)
                 if rule_in_target and priority >= trans_priority.get(trans.prop, -1):
-                    target_transitions[trans.prop] = trans
+                    state.transitions[trans.prop] = trans
                     trans_priority[trans.prop] = priority
             if not rule.pseudo_set:
-                base_props.update(rule.properties)
+                state.base_props.update(rule.properties)
             if rule_in_target:
-                target_props.update(rule.properties)
+                state.target_props.update(rule.properties)
 
         # Expand `transition: all` to every animatable property present in base/target.
-        if "all" in all_animated_props:
-            self._expand_all_transitions(ctx, all_animated_props, base_props, target_props, target_transitions)
+        if "all" in state.animated_props:
+            self._expand_all_transitions(ctx, state)
 
         # Effect props need engine handling even without a transition declaration.
         for p in EFFECT_PROPS:
-            if p in base_props or p in target_props:
-                all_animated_props.add(p)
+            if p in state.base_props or p in state.target_props:
+                state.animated_props.add(p)
 
         # Static border-radius clamping.
-        self._collect_border_radius_props(widget, ctx, target_props, all_animated_props)
+        self._collect_border_radius_props(widget, ctx, state)
 
-        return base_props, target_props, target_transitions, all_animated_props
+        return state
 
     def _needs_qt_border_radius_clamp(self, widget: QWidget, target_props: dict[str, str], prop: str) -> bool:
         raw = target_props.get(prop)
@@ -661,9 +645,7 @@ class TransitionEngine(QObject):
         widget: QWidget,
         ctx: WidgetContext,
         prop: str,
-        base_props: dict[str, str],
-        target_props: dict[str, str],
-        target_transitions: dict[str, TransitionSpec],
+        state: ResolvedRuleState,
         cause: EvaluationCause,
     ) -> bool:
         """Drive the animation for a single property. Returns True if a batched style update is needed."""
@@ -675,58 +657,94 @@ class TransitionEngine(QObject):
             return False
 
         anim_obj = ctx.active_animations.get(prop)
-        natural_hint = self._natural_hint_from_anim(anim_obj, ctx, prop, target_props, base_props, cause)
-
-        # Freeze current size into css_anim_props before _resolve_target_raw calls get_natural_size.
-        frozen = self._maybe_freeze_prop(widget, ctx, prop, base_props, anim_obj)
-
-        target_raw, is_natural_target = self._resolve_target_raw(widget, base_props, target_props, prop, natural_hint)
+        natural_hint = self._natural_hint_from_anim(anim_obj, ctx, prop, state, cause)
+        current_raw = self._resolve_current_raw(widget, ctx, prop, state.base_props, state.base_props.get(prop, "auto"))
+        target_raw, is_natural_target = self._resolve_target_raw(
+            widget, state.base_props, state.target_props, prop, natural_hint, current_raw
+        )
         if not target_raw:
-            return self._unfreeze(ctx, prop, frozen)
+            return False
 
-        base_raw = base_props.get(prop)
-        if not base_raw or base_raw == "auto":
-            base_raw = get_preferred_size_fallback(widget, base_props, prop) if prop in SIZE_PROPS else target_raw
+        if (
+            prop not in SIZE_PROPS
+            and prop not in ctx.css_anim_props
+            and state.base_props.get(prop) in (None, "", "auto")
+        ):
+            current_raw = target_raw
 
-        if prop in target_transitions and self._has_uninterpolable_color_endpoint(ctx, prop, base_raw, target_raw):
+        if prop in state.transitions and self._has_uninterpolable_color_endpoint(prop, current_raw, target_raw):
             return self._snap_uninterpolable_color(ctx, prop, anim_obj, target_raw)
 
         # Natural target with nothing running: Qt lays out at natural size without intervention.
-        if is_natural_target and not anim_obj and not ctx.pre_polish_size:
-            if prop not in ctx.css_anim_props or frozen:
-                return self._unfreeze(ctx, prop, frozen)
+        if is_natural_target and not anim_obj and not ctx.pre_polish_size and prop not in ctx.css_anim_props:
+            return False
 
         # clean_on_finish already removed this prop.
         if is_natural_target and anim_obj and prop not in ctx.css_anim_props:
             return False
 
         # No transition declared → snap.
-        if prop not in target_transitions:
-            if (
-                prop not in EFFECT_PROPS
-                and not anim_obj
-                and (prop not in ctx.css_anim_props or frozen)
-                and target_raw == base_props.get(prop)
-                and not self._needs_qt_border_radius_clamp(widget, target_props, prop)
-            ):
-                return self._unfreeze(ctx, prop, frozen)
-            return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target, target_props)
+        if prop not in state.transitions:
+            return self._apply_snap_if_needed(widget, ctx, prop, anim_obj, target_raw, is_natural_target, state)
 
-        trans = target_transitions[prop]
+        trans = state.transitions[prop]
+        if self._transition_should_snap(widget, prop, state, trans, cause):
+            return self._snap_prop_or_effect(
+                widget, ctx, prop, anim_obj, target_raw, is_natural_target, state.target_props
+            )
+
+        return self._start_or_retarget_anim(
+            widget,
+            ctx,
+            prop,
+            anim_obj,
+            state,
+            current_raw,
+            target_raw,
+            is_natural_target,
+            trans,
+            cause,
+        )
+
+    def _apply_snap_if_needed(
+        self,
+        widget: QWidget,
+        ctx: WidgetContext,
+        prop: str,
+        anim_obj: Animation | None,
+        target_raw: str,
+        is_natural_target: bool,
+        state: ResolvedRuleState,
+    ) -> bool:
+        """Snap an untransitioned property unless Qt already renders the desired value."""
         if (
+            prop not in EFFECT_PROPS
+            and not anim_obj
+            and prop not in ctx.css_anim_props
+            and target_raw == state.base_props.get(prop)
+            and not self._needs_qt_border_radius_clamp(widget, state.target_props, prop)
+        ):
+            return False
+        return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target, state.target_props)
+
+    def _transition_should_snap(
+        self,
+        widget: QWidget,
+        prop: str,
+        state: ResolvedRuleState,
+        trans: TransitionSpec,
+        cause: EvaluationCause,
+    ) -> bool:
+        """Return whether transition policy requires an immediate target update."""
+        return (
             trans.duration_ms == 0
             or not self.animations_enabled
             or cause.snaps_transitions
             or (
                 cause is EvaluationCause.RULE_RELOAD
                 and prop in BORDER_RADIUS_PROPS
-                and self._needs_qt_border_radius_clamp(widget, target_props, prop)
+                and self._needs_qt_border_radius_clamp(widget, state.target_props, prop)
             )
-        ):
-            return self._snap_prop_or_effect(widget, ctx, prop, anim_obj, target_raw, is_natural_target, target_props)
-
-        return self._start_or_retarget_anim(
-            widget, ctx, prop, anim_obj, base_props, target_props, base_raw, target_raw, is_natural_target, trans, cause
         )
 
     def _cancel_pending_delay(self, ctx: WidgetContext, prop: str) -> None:
@@ -738,19 +756,12 @@ class TransitionEngine(QObject):
         safe_disconnect(old_timer.timeout)
         old_timer.deleteLater()
 
-    def _unfreeze(self, ctx: WidgetContext, prop: str, frozen: bool) -> bool:
-        """Remove the freeze entry from css_anim_props if we created it."""
-        if frozen:
-            del ctx.css_anim_props[prop]
-        return False
-
     def _natural_hint_from_anim(
         self,
         anim_obj: Animation | None,
         ctx: WidgetContext,
         prop: str,
-        target_props: dict[str, str],
-        base_props: dict[str, str],
+        state: ResolvedRuleState,
         cause: EvaluationCause,
     ) -> str | None:
         """Return the stored natural size from a running GenericPropertyAnimation, or None."""
@@ -758,28 +769,11 @@ class TransitionEngine(QObject):
             isinstance(anim_obj, GenericPropertyAnimation)
             and prop in ctx.css_anim_props
             and prop in SIZE_PROPS
-            and not (target_props.get(prop) or base_props.get(prop))
+            and not (state.target_props.get(prop) or state.base_props.get(prop))
             and not cause.is_class_driven
         ):
             return None
         return f"{anim_obj.natural_val:.3f}{anim_obj.unit}"
-
-    def _maybe_freeze_prop(
-        self,
-        widget: QWidget,
-        ctx: WidgetContext,
-        prop: str,
-        base_props: dict[str, str],
-        anim_obj: Animation | None,
-    ) -> bool:
-        """Snapshot the widget's current rendered size into css_anim_props for size props."""
-        if anim_obj or prop in ctx.css_anim_props or prop not in SIZE_PROPS:
-            return False
-        current_raw = self._resolve_current_raw(widget, ctx, prop, base_props, base_props.get(prop, "auto"))
-        if not current_raw or current_raw == "auto":
-            return False
-        ctx.css_anim_props[prop] = current_raw
-        return True
 
     def _start_or_retarget_anim(
         self,
@@ -787,9 +781,8 @@ class TransitionEngine(QObject):
         ctx: WidgetContext,
         prop: str,
         anim_obj: Animation | None,
-        base_props: dict[str, str],
-        target_props: dict[str, str],
-        base_raw: str,
+        state: ResolvedRuleState,
+        current_raw: str,
         target_raw: str,
         is_natural_target: bool,
         trans: TransitionSpec,
@@ -800,18 +793,18 @@ class TransitionEngine(QObject):
         is_running = anim_obj is not None and anim_obj.anim.state() == QAbstractAnimation.State.Running
 
         if not is_running:
-            # Positive delay: freeze current value and schedule.
+            # Positive delay: hold the current value and schedule the animation.
             if trans.delay_ms > 0 and cause is not EvaluationCause.DELAY_FIRE:
                 if prop not in EFFECT_PROPS:
-                    current_raw = self._resolve_current_raw(widget, ctx, prop, base_props, base_raw)
                     ctx.css_anim_props[prop] = current_raw
                 self._schedule_delayed_animation(widget, ctx, prop, trans.delay_ms)
                 return prop not in EFFECT_PROPS  # needs stylesheet update iff css_anim_props changed
             if anim_obj is None:
-                current_raw = self._resolve_current_raw(widget, ctx, prop, base_props, base_raw)
-                anim_obj = self._create_animation_obj(widget, prop, current_raw, trans.duration_ms, curve, base_props)
+                anim_obj = self._create_animation_obj(
+                    widget, prop, current_raw, trans.duration_ms, curve, state.base_props
+                )
                 if anim_obj:
-                    self._register_animation(widget, ctx, prop, anim_obj)
+                    ctx.active_animations[prop] = anim_obj
             else:
                 anim_obj.update_spec(trans.duration_ms, curve)
         else:
@@ -821,16 +814,12 @@ class TransitionEngine(QObject):
         if not anim_obj:
             return False
 
-        box_size = target_border_radius_box_size(widget, target_props) if prop in BORDER_RADIUS_PROPS else None
-        if is_natural_target and isinstance(anim_obj, GenericPropertyAnimation):
-            anim_obj.update_box_props(target_props)
-            anim_obj.set_target(target_raw, clean_on_finish=True, box_size=box_size)
+        box_size = target_border_radius_box_size(widget, state.target_props) if prop in BORDER_RADIUS_PROPS else None
+        if isinstance(anim_obj, GenericPropertyAnimation):
+            anim_obj.update_box_props(state.target_props)
+            anim_obj.set_target(target_raw, clean_on_finish=is_natural_target, box_size=box_size)
         else:
-            if isinstance(anim_obj, GenericPropertyAnimation):
-                anim_obj.update_box_props(target_props)
-                anim_obj.set_target(target_raw, box_size=box_size)
-            else:
-                anim_obj.set_target(target_raw)
+            anim_obj.set_target(target_raw)
 
         # Negative transition-delay support.
         if not is_running and trans.delay_ms < 0 and anim_obj.anim.state() == QAbstractAnimation.State.Running:
@@ -853,8 +842,6 @@ class TransitionEngine(QObject):
         ctx.class_anim_props.add(prop)
         gen = ctx.class_anim_gen
         wid = id(widget)
-        if (old_cb := ctx.class_anim_callbacks.pop(prop, None)) is not None:
-            safe_disconnect(anim_obj.anim.finished, old_cb)
 
         def _on_done(_w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen) -> None:
             c = self._contexts.get(_wid)
@@ -862,15 +849,12 @@ class TransitionEngine(QObject):
                 c.class_anim_props.discard(_p)
                 self._evaluate_widget_state(_w, cause=EvaluationCause.CLASS_ANIMATION_FINISH)
 
-        ctx.class_anim_callbacks[prop] = _on_done
-        anim_obj.anim.finished.connect(_on_done)
+        self._replace_finished_callback(anim_obj, prop, ctx.class_anim_callbacks, _on_done)
 
     def _wire_clicked_anim_callback(self, widget: QWidget, ctx: WidgetContext, prop: str, anim_obj: Animation) -> None:
         """Register finished callback for clicked animations."""
         gen = ctx.clicked_anim_gen
         wid = id(widget)
-        if (old_cb := ctx.clicked_anim_callbacks.pop(prop, None)) is not None:
-            safe_disconnect(anim_obj.anim.finished, old_cb)
 
         def _on_done(_w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen) -> None:
             c = self._contexts.get(_wid)
@@ -879,8 +863,20 @@ class TransitionEngine(QObject):
                 if not c.clicked_anim_props:
                     self._deactivate_clicked(_w, _wid, _gen)
 
-        ctx.clicked_anim_callbacks[prop] = _on_done
-        anim_obj.anim.finished.connect(_on_done)
+        self._replace_finished_callback(anim_obj, prop, ctx.clicked_anim_callbacks, _on_done)
+
+    @staticmethod
+    def _replace_finished_callback(
+        anim_obj: Animation,
+        prop: str,
+        callbacks: dict[str, Callable[[], None]],
+        callback: Callable[[], None],
+    ) -> None:
+        """Replace a per-property finished callback without accumulating signal connections."""
+        if (old_callback := callbacks.pop(prop, None)) is not None:
+            safe_disconnect(anim_obj.anim.finished, old_callback)
+        callbacks[prop] = callback
+        anim_obj.anim.finished.connect(callback)
 
     def _resolve_target_raw(
         self,
@@ -889,42 +885,39 @@ class TransitionEngine(QObject):
         target_props: dict[str, str],
         prop: str,
         natural_hint: str | None = None,
+        current_raw: str | None = None,
     ) -> tuple[str, bool]:
         """Resolve the CSS target value and whether it's a natural (unconstrained) target."""
         target_raw = target_props.get(prop) or base_props.get(prop)
         is_natural_target = prop in SIZE_PROPS and (not target_raw or target_raw == "auto")
         if target_raw == "auto":
-            target_raw = natural_hint or self._get_natural_size(widget, base_props, prop)
+            target_raw = natural_hint or self._get_natural_size(widget, base_props, prop, current_raw)
         if not target_raw:
             if prop in SIZE_PROPS:
-                target_raw = natural_hint or self._get_natural_size(widget, base_props, prop)
+                target_raw = natural_hint or self._get_natural_size(widget, base_props, prop, current_raw)
             elif "color" in prop:
                 target_raw = "white" if prop == "color" else "transparent"
         return target_raw or "", is_natural_target
 
-    def _cleanup_orphans(
-        self, _widget: QWidget, ctx: WidgetContext, all_animated_props: set[str], base_props: dict[str, str]
-    ) -> bool:
+    def _cleanup_orphans(self, ctx: WidgetContext, state: ResolvedRuleState) -> bool:
         """Snap/stop animations for props no longer covered by any rule."""
         needs_update = False
         # Cancel pending delay timers.
-        for prop in list(ctx.pending_delays.keys()):
-            if prop not in all_animated_props:
-                t = ctx.pending_delays.pop(prop)
-                t.stop()
-                t.deleteLater()
+        for prop in list(ctx.pending_delays):
+            if prop not in state.animated_props:
+                self._cancel_pending_delay(ctx, prop)
         for prop, orphan in list(ctx.active_animations.items()):
-            if prop in all_animated_props:
+            if prop in state.animated_props:
                 continue
             ctx.class_anim_props.discard(prop)
             if (old_cb := ctx.class_anim_callbacks.pop(prop, None)) is not None:
                 safe_disconnect(orphan.anim.finished, old_cb)
-            snap_target = base_props.get(prop)
+            snap_target = state.base_props.get(prop)
             if snap_target == "auto":
                 snap_target = None
             is_natural_snap = not snap_target and prop in SIZE_PROPS
             if is_natural_snap:
-                snap_target = get_preferred_size_fallback(orphan.widget, base_props, prop)
+                snap_target = get_preferred_size_fallback(orphan.widget, state.base_props, prop)
             if snap_target:
                 if isinstance(orphan, ColorAnimation) and not self._is_interpolable_color_value(snap_target):
                     orphan.anim.stop()
@@ -953,7 +946,7 @@ class TransitionEngine(QObject):
         stale_snapped = {
             p
             for p in ctx.css_anim_props
-            if p not in all_animated_props and p not in ctx.active_animations and p not in base_props
+            if p not in state.animated_props and p not in ctx.active_animations and p not in state.base_props
         }
         if stale_snapped:
             for p in stale_snapped:
@@ -969,6 +962,23 @@ class TransitionEngine(QObject):
         """
         Hot-reload CSS rules: stop all animations, clear inline styles, update rules.
         """
+        animated_widgets, inline_widget_ids = self._collect_reload_widgets()
+        for ctx in list(self._contexts.values()):
+            self._reset_context_for_reload(ctx)
+
+        self._matcher.rules = rules
+        self._matcher.build_quick_filters()
+        self._matcher.clear_caches()
+
+        animated_widget_ids = self._clear_reload_styles(animated_widgets)
+        effect_only_widgets = {w for w in animated_widgets if id(w) not in inline_widget_ids}
+        QTimer.singleShot(
+            0,
+            lambda: self._reeval_reload_widgets_deferred(effect_only_widgets, animated_widget_ids),
+        )
+
+    def _collect_reload_widgets(self) -> tuple[set[QWidget], set[int]]:
+        """Return live widgets that need special handling during a stylesheet reload."""
         animated_widgets: set[QWidget] = set()
         inline_widget_ids: set[int] = set()
         for _wid, ctx in list(self._contexts.items()):
@@ -982,37 +992,23 @@ class TransitionEngine(QObject):
                     inline_widget_ids.add(_wid)
             except RuntimeError:
                 pass
-        for _wid, ctx in list(self._contexts.items()):
-            for timer in ctx.pending_delays.values():
-                try:
-                    timer.stop()
-                    timer.deleteLater()
-                except RuntimeError, TypeError:
-                    pass
-                safe_disconnect(timer.timeout)
-            ctx.pending_delays.clear()
-            for prop, cb in ctx.clicked_anim_callbacks.items():
-                if (anim_obj := ctx.active_animations.get(prop)) is not None:
-                    safe_disconnect(anim_obj.anim.finished, cb)
-            ctx.clicked_anim_callbacks.clear()
-            ctx.clicked_anim_props.clear()
-            ctx.active_pseudos.discard(":clicked")
-            for anim_obj in ctx.active_animations.values():
-                try:
-                    anim_obj.anim.stop()
-                    if isinstance(anim_obj, BoxShadowHandle):
-                        apply_shadow_to_widget(anim_obj.widget, None, self.effect_priority)
-                    elif isinstance(anim_obj, OpacityAnimation):
-                        anim_obj.widget.setGraphicsEffect(None)
-                    anim_obj.deleteLater()
-                except RuntimeError:
-                    pass
-            ctx.active_animations.clear()
 
-        # Update rules
-        self._matcher.rules = rules
-        self._matcher.build_quick_filters()
-        self._matcher.clear_caches()
+        return animated_widgets, inline_widget_ids
+
+    def _reset_context_for_reload(self, ctx: WidgetContext) -> None:
+        """Discard transient animation state before the new rule set is installed."""
+        self._cancel_all_pending_delays(ctx)
+        self._disconnect_finished_callbacks(ctx, ctx.class_anim_callbacks)
+        self._disconnect_finished_callbacks(ctx, ctx.clicked_anim_callbacks)
+        ctx.class_anim_props.clear()
+        ctx.clicked_anim_props.clear()
+        ctx.active_pseudos.discard(":clicked")
+        ctx.class_anim_gen += 1
+        ctx.clicked_anim_gen += 1
+        self._stop_animations(ctx, clear_effects=True)
+
+    def _clear_reload_styles(self, animated_widgets: set[QWidget]) -> set[int]:
+        """Remove engine-owned inline styles and return the ids reset during the reload."""
 
         animated_widget_ids: set[int] = set()
         for widget in animated_widgets:
@@ -1038,10 +1034,7 @@ class TransitionEngine(QObject):
                 except RuntimeError:
                     pass
 
-        effect_only_widgets = {w for w in animated_widgets if id(w) not in inline_widget_ids}
-        prev_animated_ids = {id(w) for w in animated_widgets}
-
-        QTimer.singleShot(0, lambda: self._reeval_reload_widgets_deferred(effect_only_widgets, prev_animated_ids))
+        return animated_widget_ids
 
     def _reeval_reload_widgets_deferred(self, effect_only_widgets: set[QWidget], prev_animated_ids: set[int]) -> None:
         """Re-evaluate widgets that need engine-managed state after a hot-reload stylesheet change."""
@@ -1100,8 +1093,10 @@ class TransitionEngine(QObject):
     # Animation helpers
     # -------------------------------------------------------------------------
 
-    def _get_natural_size(self, widget: QWidget, base_props: dict[str, str], prop: str) -> str:
-        return get_natural_size(widget, self._ctx(widget), base_props, prop)
+    def _get_natural_size(
+        self, widget: QWidget, base_props: dict[str, str], prop: str, current_raw: str | None = None
+    ) -> str:
+        return get_natural_size(widget, self._ctx(widget), base_props, prop, current_raw)
 
     def _is_animatable(self, prop: str) -> bool:
         """Return True if the engine knows how to animate this CSS property."""
@@ -1117,11 +1112,10 @@ class TransitionEngine(QObject):
         """Return True when value is a solid color ColorAnimation can interpolate."""
         return parse_color(value).isValid()
 
-    def _has_uninterpolable_color_endpoint(self, ctx: WidgetContext, prop: str, base_raw: str, target_raw: str) -> bool:
+    def _has_uninterpolable_color_endpoint(self, prop: str, current_raw: str, target_raw: str) -> bool:
         """Return True when a color transition contains a static-only endpoint such as a gradient."""
         if not self._is_color_prop(prop):
             return False
-        current_raw = ctx.css_anim_props.get(prop, base_raw)
         return not self._is_interpolable_color_value(current_raw) or not self._is_interpolable_color_value(target_raw)
 
     def _snap_uninterpolable_color(
@@ -1141,14 +1135,8 @@ class TransitionEngine(QObject):
             return True
         return False
 
-    def _register_animation(self, widget: QWidget, ctx: WidgetContext, prop: str, anim_obj: Animation) -> None:
-        """Register an animation object and ensure widget destroyed cleanup is wired."""
-        ctx.active_animations[prop] = anim_obj
-        self._connect_destroyed(widget)
-
     def _schedule_delayed_animation(self, widget: QWidget, ctx: WidgetContext, prop: str, delay_ms: int) -> None:
-        """Schedule prop's animation to start after delay_ms, wiring up the destroyed signal."""
-        self._connect_destroyed(widget)
+        """Schedule prop's animation to start after delay_ms."""
         wid = id(widget)
         timer = QTimer(self)
         timer.setSingleShot(True)
@@ -1171,13 +1159,11 @@ class TransitionEngine(QObject):
         if not self._should_evaluate(widget):
             return
         ctx = self._ctx(widget)
-        base_props, target_props, target_transitions, all_animated_props = self._collect_rule_state(widget, ctx)
-        ctx.style_box_props = dict(target_props)
-        if prop not in all_animated_props:
+        state = self._collect_rule_state(widget, ctx)
+        ctx.style_box_props = dict(state.target_props)
+        if prop not in state.animated_props:
             return
-        needs_update = self._apply_prop_animation(
-            widget, ctx, prop, base_props, target_props, target_transitions, EvaluationCause.DELAY_FIRE
-        )
+        needs_update = self._apply_prop_animation(widget, ctx, prop, state, EvaluationCause.DELAY_FIRE)
         if needs_update:
             self._flush_widget_style_now(widget, ctx)
 
@@ -1208,7 +1194,7 @@ class TransitionEngine(QObject):
         if prop in EFFECT_PROPS:
             new_anim = self._create_animation_obj(widget, prop, target_raw, 0, QEasingCurve.Type.Linear, target_props)
             if new_anim:
-                self._register_animation(widget, ctx, prop, new_anim)
+                ctx.active_animations[prop] = new_anim
             return False
         if is_natural_target:
             if prop in ctx.css_anim_props:

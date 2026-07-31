@@ -21,7 +21,6 @@ class RuleMatcher:
         # Flags populated at quick filter build time
         self.has_effect_rules: bool = False
         self.has_border_radius_rules: bool = False
-        self.has_cursor_rules: bool = False
 
         # Two-level caches
         self.type_class_rule_cache: dict[tuple[str, str], list[StyleRule]] = {}
@@ -36,7 +35,6 @@ class RuleMatcher:
         self.animated_ids.clear()
         self.has_effect_rules = False
         self.has_border_radius_rules = False
-        self.has_cursor_rules = False
 
         for rule in self.rules:
             if rule.subcontrol:
@@ -50,8 +48,6 @@ class RuleMatcher:
                 self.has_effect_rules = True
             if has_border_radius_props:
                 self.has_border_radius_rules = True
-            if has_cursor_props:
-                self.has_cursor_rules = True
             last_segment = rule.segments[-1]
             if last_segment.startswith("#"):
                 self.animated_ids.add(last_segment.split(".")[0][1:])

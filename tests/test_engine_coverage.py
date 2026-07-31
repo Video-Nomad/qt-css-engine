@@ -35,7 +35,7 @@ from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QSize, Qt, QTimer
 from qt_css_engine.qt_compat.QtGui import QColor
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QFrame, QPushButton, QVBoxLayout, QWidget
-from qt_css_engine.types import Animation, EvaluationCause
+from qt_css_engine.types import Animation, EvaluationCause, ResolvedRuleState
 
 # ---------------------------------------------------------------------------
 # Helpers (mirrors test_anim.py)
@@ -247,7 +247,7 @@ def test_retarget_mid_flight_unhover_same_animation_object(_app: QApplication) -
     """
     Unhovering while animation runs must re-target the same object, not create a new one.
 
-    Transition must be on the BASE rule so `target_transitions` is populated when returning
+    Transition must be on the BASE rule so the resolved transition is populated when returning
     to base — otherwise the engine snaps instead of re-targeting.
     """
     engine = make_engine("""
@@ -341,7 +341,7 @@ def test_cleanup_orphans_cancels_delay_for_removed_prop(_app: QApplication) -> N
     assert "background-color" in ctx.pending_delays
 
     # Simulate re-evaluation where background-color is no longer in any rule
-    engine._cleanup_orphans(widget, ctx, all_animated_props=set(), base_props={})
+    engine._cleanup_orphans(ctx, ResolvedRuleState())
 
     assert "background-color" not in ctx.pending_delays, "delay must be cancelled for orphaned prop"
     destroy(widget)
