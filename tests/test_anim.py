@@ -1349,6 +1349,68 @@ def test_generic_border_radius_steps_reverse_keeps_qvariant_endpoints_float(_app
     destroy(widget)
 
 
+def test_color_animation_steps_reverse_retraces_without_jump(_app: QApplication) -> None:
+    """A discrete color transition must preserve its visible step when reversed mid-flight."""
+    widget = QWidget()
+    ctx = WidgetContext()
+    anim = ColorAnimation(
+        widget,
+        "background-color",
+        "red",
+        1000,
+        make_steps_curve(4, "jump-end"),
+        ctx=ctx,
+    )
+
+    anim.set_target("blue")
+    anim.anim.setCurrentTime(500)
+    color_before_reverse = QColor(anim.current_color)
+
+    anim.set_target("red")
+
+    assert anim.anim.currentTime() == 500
+    assert anim.current_color == color_before_reverse
+    assert anim.start_color == QColor("blue")
+    assert anim.end_color == QColor("red")
+
+    anim.anim.setCurrentTime(1000)
+    assert anim.current_color == QColor("red")
+    destroy(widget)
+
+
+def test_box_shadow_animation_steps_reverse_retraces_without_jump(_app: QApplication) -> None:
+    """A discrete shadow transition must reverse from the same visible step."""
+    widget = QWidget()
+    anim = BoxShadowHandle(
+        widget,
+        "0px 0px 2px red",
+        1000,
+        make_steps_curve(4, "jump-end"),
+    )
+
+    anim.set_target("8px 4px 18px blue")
+    anim.anim.setCurrentTime(500)
+    assert anim._current is not None
+    offset_before_reverse = anim._current.offset_x
+    blur_before_reverse = anim._current.blur
+    color_before_reverse = QColor(anim._current.color)
+
+    anim.set_target("0px 0px 2px red")
+
+    assert anim.anim.currentTime() == 500
+    assert anim._current is not None
+    assert anim._current.offset_x == pytest.approx(offset_before_reverse)
+    assert anim._current.blur == pytest.approx(blur_before_reverse)
+    assert anim._current.color == color_before_reverse
+
+    anim.anim.setCurrentTime(1000)
+    assert anim._current is not None
+    assert anim._current.offset_x == pytest.approx(0.0)
+    assert anim._current.blur == pytest.approx(2.0)
+    assert anim._current.color == QColor("red")
+    destroy(widget)
+
+
 def test_generic_border_radius_uses_size_hint_when_geometry_unset(_app: QApplication) -> None:
     widget = FixedHintWidget()
     widget.resize(0, 0)
@@ -1859,6 +1921,47 @@ def test_step_end_alias_same_as_jump_end_1() -> None:
 # ---------------------------------------------------------------------------
 # opacity + box-shadow coexistence
 # ---------------------------------------------------------------------------
+
+
+def test_box_shadow_priority_keeps_shadow_during_opacity_animation(_app: QApplication) -> None:
+    """With box-shadow priority, opacity still advances but never replaces the visible shadow effect."""
+    engine = make_engine("""
+        .box {
+            opacity: 0.7;
+            box-shadow: 0px 0px 2px red;
+            transition: opacity 1000ms linear, box-shadow 1000ms linear;
+        }
+        .box:hover {
+            opacity: 0.2;
+            box-shadow: 8px 4px 18px blue;
+        }
+    """)
+    engine.effect_priority = "box-shadow"
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+
+    ctx = engine._ctx(widget)
+    opacity_anim = _get_anim(engine, widget, "opacity")
+    shadow_anim = _get_anim(engine, widget, "box-shadow")
+    assert isinstance(opacity_anim, OpacityAnimation)
+    assert isinstance(shadow_anim, BoxShadowHandle)
+    assert isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect)
+
+    ctx.active_pseudos.add(":hover")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    opacity_anim.anim.setCurrentTime(500)
+    shadow_anim.anim.setCurrentTime(500)
+
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsDropShadowEffect)
+    assert effect.offset().x() == pytest.approx(4.0)
+    assert effect.blurRadius() == pytest.approx(10.0)
+    assert opacity_anim._current_val == pytest.approx(0.45)
+
+    opacity_anim.anim.setCurrentTime(1000)
+    assert isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect)
+    destroy(widget)
 
 
 def test_shadow_stored_when_opacity_holds_slot(_app: QApplication) -> None:
@@ -2860,6 +2963,79 @@ def test_clicked_reload_clears_state(_app: QApplication) -> None:
 # ---------------------------------------------------------------------------
 # Effect props (opacity / box-shadow) initialization and hot-reload
 # ---------------------------------------------------------------------------
+
+
+def test_engine_drives_opacity_transition_and_reverse(_app: QApplication) -> None:
+    """Opacity transitions must interpolate through QGraphicsOpacityEffect in both directions."""
+    engine = make_engine("""
+        .box { opacity: 1; transition: opacity 1000ms linear; }
+        .box:hover { opacity: 0.2; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+
+    ctx = engine._ctx(widget)
+    anim = _get_anim(engine, widget, "opacity")
+    assert isinstance(anim, OpacityAnimation)
+
+    ctx.active_pseudos.add(":hover")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    assert anim.anim.state() == QAbstractAnimation.State.Running
+    assert float(anim.anim.endValue()) == pytest.approx(0.2)
+
+    anim.anim.setCurrentTime(500)
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsOpacityEffect)
+    assert effect.opacity() == pytest.approx(0.6)
+
+    ctx.active_pseudos.clear()
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    assert float(anim.anim.startValue()) == pytest.approx(0.6)
+    assert float(anim.anim.endValue()) == pytest.approx(1.0)
+
+    anim.anim.setCurrentTime(1000)
+    assert widget.graphicsEffect() is None
+    destroy(widget)
+
+
+def test_engine_drives_box_shadow_transition_and_reverse(_app: QApplication) -> None:
+    """Box-shadow transitions must update the live Qt effect and return to the base shadow."""
+    engine = make_engine("""
+        .box { box-shadow: 0px 0px 2px red; transition: box-shadow 1000ms linear; }
+        .box:hover { box-shadow: 10px 6px 18px blue; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+
+    ctx = engine._ctx(widget)
+    anim = _get_anim(engine, widget, "box-shadow")
+    assert isinstance(anim, BoxShadowHandle)
+
+    ctx.active_pseudos.add(":hover")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    assert anim.anim.state() == QAbstractAnimation.State.Running
+
+    anim.anim.setCurrentTime(500)
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsDropShadowEffect)
+    assert effect.offset().x() == pytest.approx(5.0)
+    assert effect.offset().y() == pytest.approx(3.0)
+    assert effect.blurRadius() == pytest.approx(10.0)
+
+    ctx.active_pseudos.clear()
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    assert anim.anim.state() == QAbstractAnimation.State.Running
+
+    anim.anim.setCurrentTime(1000)
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsDropShadowEffect)
+    assert effect.offset().x() == pytest.approx(0.0)
+    assert effect.offset().y() == pytest.approx(0.0)
+    assert effect.blurRadius() == pytest.approx(2.0)
+    assert effect.color() == QColor("red")
+    destroy(widget)
 
 
 def test_effect_opacity_installed_on_initial_evaluation(_app: QApplication) -> None:
