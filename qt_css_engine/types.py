@@ -59,6 +59,17 @@ class InternalWriteReason(Enum):
     MEASURE = auto()
 
 
+@dataclass(frozen=True)
+class ResolvedProperty:
+    """Values needed to decide how one CSS property should change."""
+
+    animation: Animation | None
+    current: str
+    target: str
+    is_natural_target: bool
+    spec: TransitionSpec | None
+
+
 @dataclass
 class WidgetContext:
     """Per-widget state tracked by the transition engine."""
