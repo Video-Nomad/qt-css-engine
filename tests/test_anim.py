@@ -175,6 +175,28 @@ def test_widget_destroyed_removed_from_active_animations(_app: QApplication) -> 
     assert id(widget) not in engine._contexts
 
 
+def test_widget_cleanup_tolerates_animation_deleted_first(_app: QApplication) -> None:
+    """Qt shutdown may delete a QVariantAnimation before its widget's destroyed callback runs."""
+    engine = make_engine("""
+        .box { background-color: steelblue; }
+        .box:hover { background-color: royalblue; transition: background-color 1000ms; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    hover_widget(engine, widget)
+
+    ctx = engine._ctx(widget)
+    anim_obj = _get_anim(engine, widget, "background-color")
+    callback = lambda: None
+    anim_obj.anim.finished.connect(callback)
+    ctx.class_anim_callbacks["background-color"] = callback
+
+    qt_delete(anim_obj.anim)
+    destroy(widget)  # must not access the deleted QVariantAnimation signal
+
+    assert id(widget) not in engine._contexts
+
+
 def test_widget_destroyed_stops_running_animation(_app: QApplication) -> None:
     engine = make_engine("""
         .box { background-color: steelblue; }
@@ -2006,6 +2028,23 @@ def test_delay_widget_destroyed_no_crash(_app: QApplication) -> None:
     assert "background-color" in engine._ctx(widget).pending_delays
 
     destroy(widget)  # must not raise; _on_widget_destroyed cancels timer
+
+    assert id(widget) not in engine._contexts
+
+
+def test_widget_cleanup_tolerates_delay_timer_deleted_first(_app: QApplication) -> None:
+    """Qt shutdown may also delete a transition-delay timer before its widget."""
+    engine = make_engine("""
+        .box { background-color: steelblue; }
+        .box:hover { background-color: royalblue; transition: background-color 200ms ease 500ms; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    hover_widget(engine, widget)
+
+    timer = engine._ctx(widget).pending_delays["background-color"]
+    qt_delete(timer)
+    destroy(widget)  # must not access the deleted QTimer
 
     assert id(widget) not in engine._contexts
 

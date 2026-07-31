@@ -479,7 +479,11 @@ class TransitionEngine(QObject):
         for prop, callback in callbacks.items():
             anim_obj = ctx.active_animations.get(prop)
             if anim_obj is not None:
-                safe_disconnect(anim_obj.anim.finished, callback)
+                try:
+                    safe_disconnect(anim_obj.anim.finished, callback)
+                except RuntimeError, TypeError:
+                    # During Qt shutdown, child QVariantAnimations may already be gone.
+                    pass
         callbacks.clear()
 
     def _stop_animations(self, ctx: WidgetContext, *, clear_effects: bool = False) -> None:
@@ -887,9 +891,13 @@ class TransitionEngine(QObject):
         old_timer = ctx.pending_delays.pop(prop, None)
         if old_timer is None:
             return
-        old_timer.stop()
-        safe_disconnect(old_timer.timeout)
-        old_timer.deleteLater()
+        try:
+            old_timer.stop()
+            safe_disconnect(old_timer.timeout)
+            old_timer.deleteLater()
+        except RuntimeError:
+            # Qt may destroy timers before their owning widget during app shutdown.
+            pass
 
     # -------------------------------------------------------------------------
     # Animation execution and completion tracking
