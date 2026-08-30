@@ -470,6 +470,47 @@ def test_class_change_numeric_initial_tick_flushes_start_size_immediately(_app: 
     destroy(widget)
 
 
+def test_class_change_ticks_after_the_first_frame_are_batched(_app: QApplication) -> None:
+    """
+    Only the initial class-change frame is written synchronously.
+
+    Later ticks must batch like hover-driven ones: one stylesheet write per widget per
+    event-loop turn, not one per animating property.  Writing per property made a
+    class-driven transition cost several times a hover-driven one for the same animation.
+    """
+    engine = make_engine("""
+        .box {
+            background-color: red;
+            color: white;
+            transition: background-color 300ms, color 300ms;
+        }
+        .box.on { background-color: blue; color: black; }
+    """)
+    widget = TrackedWidget()
+    widget.setProperty("class", "box")
+    widget.resize(60, 60)
+    ctx = engine._ctx(widget)
+    # Rendered state before the class change, as a real polished widget would have.
+    ctx.css_anim_props["background-color"] = "red"
+    ctx.css_anim_props["color"] = "white"
+
+    widget.setProperty("class", "box on")
+    engine._on_class_change(widget)
+    assert len(ctx.class_anim_props) == 2, "both properties should animate from the class change"
+
+    # Drive one frame of every running animation and count the resulting writes.
+    count_before = widget.setStyleSheet_count
+    for anim_obj in list(ctx.active_animations.values()):
+        anim_obj.anim.setCurrentTime(150)
+    assert widget.setStyleSheet_count == count_before, "ticks must not write synchronously"
+    assert ctx.style_flush_pending, "a batched flush should be queued instead"
+
+    engine._flush_scheduled_widget_style(widget, id(widget))
+    assert widget.setStyleSheet_count == count_before + 1, "the batch must collapse to one write"
+    assert not ctx.style_flush_pending
+    destroy(widget)
+
+
 # ---------------------------------------------------------------------------
 # :focus animation end-to-end
 # ---------------------------------------------------------------------------

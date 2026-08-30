@@ -2,24 +2,32 @@ from qt_css_engine.qt_compat.QtWidgets import QApplication, QFrame, QStyle, QWid
 from qt_css_engine.types import InternalWriteReason, WidgetContext
 from qt_css_engine.utils import parse_css_val, scoped_anim_style
 
+# Side -> longhand property name. These lookups run hundreds of times per animation frame
+# (four sides per border-radius clamp), so the names are interned up front rather than
+# rebuilt with an f-string on every call.
+_SIDES = ("left", "right", "top", "bottom")
+_PADDING_KEYS = {side: f"padding-{side}" for side in _SIDES}
+_MARGIN_KEYS = {side: f"margin-{side}" for side in _SIDES}
+_BORDER_WIDTH_KEYS = {side: f"border-{side}-width" for side in _SIDES}
+
 
 def padding_side_px(base_props: dict[str, str], side: str) -> int:
     """Return the QSS padding in pixels for one side ('left', 'right', 'top', 'bottom')."""
-    raw = base_props.get(f"padding-{side}") or base_props.get("padding") or "0"
+    raw = base_props.get(_PADDING_KEYS.get(side, f"padding-{side}")) or base_props.get("padding") or "0"
     v = parse_css_val(raw)
     return int(v) if isinstance(v, (int, float)) else 0
 
 
 def margin_side_px(base_props: dict[str, str], side: str) -> int:
     """Return the QSS margin in pixels for one side ('left', 'right', 'top', 'bottom')."""
-    raw = base_props.get(f"margin-{side}") or base_props.get("margin") or "0"
+    raw = base_props.get(_MARGIN_KEYS.get(side, f"margin-{side}")) or base_props.get("margin") or "0"
     v = parse_css_val(raw)
     return int(v) if isinstance(v, (int, float)) else 0
 
 
 def _border_side_px(base_props: dict[str, str], side: str) -> int:
     """Return the QSS border width in pixels for one side ('left', 'right', 'top', 'bottom')."""
-    raw = base_props.get(f"border-{side}-width") or base_props.get("border-width") or "0"
+    raw = base_props.get(_BORDER_WIDTH_KEYS.get(side, f"border-{side}-width")) or base_props.get("border-width") or "0"
     v = parse_css_val(raw)
     return int(v) if isinstance(v, (int, float)) else 0
 
@@ -158,7 +166,9 @@ def get_natural_size(widget: QWidget, ctx: WidgetContext, base_props: dict[str, 
         else:
             result = get_preferred_size_fallback(widget, base_props, prop)
     finally:
-        widget.setStyleSheet(scoped_anim_style(widget, ctx.css_anim_props))
+        restored = scoped_anim_style(widget, ctx.css_anim_props)
+        ctx.applied_style = restored
+        widget.setStyleSheet(restored)
         # Restore the constrained geometry so there is no flash before animation starts.
         if parent_layout is not None:
             for w_ in ancestors:
