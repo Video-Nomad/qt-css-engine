@@ -81,6 +81,10 @@ class WidgetContext:
     style_box_props: dict[str, str] = field(default_factory=lambda: dict[str, str]())
     # True while an inline stylesheet flush is queued for this widget.
     style_flush_pending: bool = False
+    # Last scoped stylesheet string handed to widget.setStyleSheet(). Used to skip redundant
+    # writes, which would otherwise repolish the widget and its children for no change.
+    # Must be reset to None whenever the widget's stylesheet is written outside the flush path.
+    applied_style: str | None = None
     # True while class-change evaluation must synchronously restore inline animation styles.
     style_flush_immediate: bool = False
 

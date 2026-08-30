@@ -2,6 +2,7 @@ import itertools
 import math
 import re
 from collections.abc import Callable
+from functools import lru_cache
 from typing import Any
 
 from .qt_compat.QtCore import QEasingCurve, QPointF
@@ -65,55 +66,68 @@ def make_cubic_bezier_curve(x1: float, y1: float, x2: float, y2: float) -> QEasi
     return curve
 
 
-def interpolate_oklab(c1: QColor, c2: QColor, t: float) -> QColor:
-    """Interpolate two QColors in OKLab space with premultiplied alpha."""
+def _to_linear(c: float) -> float:
+    return ((c + 0.055) / 1.055) ** 2.4 if c >= 0.04045 else c / 12.92
 
-    def _to_linear(c: float) -> float:
-        return ((c + 0.055) / 1.055) ** 2.4 if c >= 0.04045 else c / 12.92
 
-    def _to_srgb(c: float) -> float:
-        return 1.055 * (c ** (1.0 / 2.4)) - 0.055 if c >= 0.0031308 else 12.92 * c
+def _to_srgb(c: float) -> float:
+    return 1.055 * (c ** (1.0 / 2.4)) - 0.055 if c >= 0.0031308 else 12.92 * c
 
-    def _cbrt(x: float) -> float:
-        return math.copysign(abs(x) ** (1.0 / 3.0), x)
 
-    def _to_oklab(r: float, g: float, b: float) -> tuple[float, float, float]:
-        l = _to_linear(r)
-        m = _to_linear(g)
-        s = _to_linear(b)
-        lms_l = 0.4122214708 * l + 0.5363325363 * m + 0.0514459929 * s
-        lms_m = 0.2119034982 * l + 0.6806995451 * m + 0.1073969566 * s
-        lms_s = 0.0883024619 * l + 0.2817188376 * m + 0.6299787005 * s
-        l_, m_, s_ = _cbrt(lms_l), _cbrt(lms_m), _cbrt(lms_s)
-        return (
-            0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
-            1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
-            0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
-        )
+def _cbrt(x: float) -> float:
+    return math.copysign(abs(x) ** (1.0 / 3.0), x)
 
-    def _from_oklab(L: float, A: float, B: float) -> tuple[float, float, float]:
-        l_ = L + 0.3963377774 * A + 0.2158037573 * B
-        m_ = L - 0.1055613458 * A - 0.0638541728 * B
-        s_ = L - 0.0894841775 * A - 1.2914855480 * B
-        l, m, s = l_**3, m_**3, s_**3
-        r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
-        g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
-        b = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
-        return (
-            _to_srgb(max(0.0, min(1.0, r))),
-            _to_srgb(max(0.0, min(1.0, g))),
-            _to_srgb(max(0.0, min(1.0, b))),
-        )
 
-    L1, A1, B1 = _to_oklab(c1.redF(), c1.greenF(), c1.blueF())
-    L2, A2, B2 = _to_oklab(c2.redF(), c2.greenF(), c2.blueF())
+def _to_oklab(r: float, g: float, b: float) -> tuple[float, float, float]:
+    l = _to_linear(r)
+    m = _to_linear(g)
+    s = _to_linear(b)
+    lms_l = 0.4122214708 * l + 0.5363325363 * m + 0.0514459929 * s
+    lms_m = 0.2119034982 * l + 0.6806995451 * m + 0.1073969566 * s
+    lms_s = 0.0883024619 * l + 0.2817188376 * m + 0.6299787005 * s
+    l_, m_, s_ = _cbrt(lms_l), _cbrt(lms_m), _cbrt(lms_s)
+    return (
+        0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+        1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+        0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+    )
 
-    a1 = c1.alphaF()
-    a2 = c2.alphaF()
 
-    # Premultiply the OKLab channels by their respective alphas
-    L1_pre, A1_pre, B1_pre = L1 * a1, A1 * a1, B1 * a1
-    L2_pre, A2_pre, B2_pre = L2 * a2, A2 * a2, B2 * a2
+def _from_oklab(L: float, A: float, B: float) -> tuple[float, float, float]:
+    l_ = L + 0.3963377774 * A + 0.2158037573 * B
+    m_ = L - 0.1055613458 * A - 0.0638541728 * B
+    s_ = L - 0.0894841775 * A - 1.2914855480 * B
+    l, m, s = l_**3, m_**3, s_**3
+    r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
+    g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
+    b = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    return (
+        _to_srgb(max(0.0, min(1.0, r))),
+        _to_srgb(max(0.0, min(1.0, g))),
+        _to_srgb(max(0.0, min(1.0, b))),
+    )
+
+
+# (L, A, B) premultiplied by alpha, plus the alpha itself.
+OklabPremul = tuple[float, float, float, float]
+
+
+def to_oklab_premul(color: QColor) -> OklabPremul:
+    """Convert an sRGB QColor to alpha-premultiplied OKLab.
+
+    An animation's endpoints do not change while it runs, so converting them once and
+    interpolating the results keeps two of the three sRGB<->OKLab conversions per frame
+    out of the tick path.
+    """
+    L, A, B = _to_oklab(color.redF(), color.greenF(), color.blueF())
+    alpha = color.alphaF()
+    return (L * alpha, A * alpha, B * alpha, alpha)
+
+
+def lerp_oklab_premul(c1: OklabPremul, c2: OklabPremul, t: float) -> QColor:
+    """Interpolate two premultiplied OKLab endpoints at progress t and return an sRGB QColor."""
+    L1_pre, A1_pre, B1_pre, a1 = c1
+    L2_pre, A2_pre, B2_pre, a2 = c2
 
     # Interpolate the premultiplied values and the alpha
     a_out = a1 + (a2 - a1) * t
@@ -134,6 +148,11 @@ def interpolate_oklab(c1: QColor, c2: QColor, t: float) -> QColor:
     r, g, b = _from_oklab(L_out, A_out, B_out)
 
     return QColor.fromRgbF(r, g, b, max(0.0, min(1.0, a_out)))
+
+
+def interpolate_oklab(c1: QColor, c2: QColor, t: float) -> QColor:
+    """Interpolate two QColors in OKLab space with premultiplied alpha."""
+    return lerp_oklab_premul(to_oklab_premul(c1), to_oklab_premul(c2), t)
 
 
 def lerp_shadow(a: ShadowParams, b: ShadowParams, t: float) -> ShadowParams:
@@ -248,6 +267,11 @@ def parse_box_shadow(val: str) -> ShadowParams | None:
     )
 
 
+# Both parsers below are called many times per animation tick — the box-model helpers re-read
+# the same handful of CSS strings for every side of every widget. Results are immutable, so
+# memoising them is transparent; the key space is the small set of literals in a stylesheet
+# plus the interpolated values the engine itself emits.
+@lru_cache(maxsize=4096)
 def parse_css_val(val: str | None) -> int | float | str | None:
     if not val:
         return None
@@ -263,6 +287,7 @@ def parse_css_val(val: str | None) -> int | float | str | None:
 _CSS_NUMERIC_RE = re.compile(r"^\s*(-?[\d.]+)\s*(px|pt|em|rem|%|)\s*$")
 
 
+@lru_cache(maxsize=4096)
 def parse_css_numeric(val: str | None) -> tuple[float, str] | None:
     """
     Parse a CSS numeric value into (number, unit).
@@ -292,12 +317,18 @@ def scoped_anim_style(widget: QWidget, props: dict[str, str]) -> str:
     Sets ``_anim_scope`` on the widget lazily so all call sites are covered regardless
     of whether the widget was ever added to the watch set.
     """
-    scope_id: str = widget.property("_anim_scope") or ""
-    if not scope_id:
-        scope_id = str(next(_scope_counter))
-        widget.setProperty("_anim_scope", scope_id)
+    # The selector never changes for a widget, but this runs on every animation tick, so it is
+    # cached on the widget instead of round-tripping through property()/setProperty() and
+    # rebuilding the string each time.
+    selector: str | None = getattr(widget, "_anim_scope_selector", None)
+    if selector is None:
+        scope_id: str = widget.property("_anim_scope") or ""
+        if not scope_id:
+            scope_id = str(next(_scope_counter))
+            widget.setProperty("_anim_scope", scope_id)
+        selector = f'{type(widget).__name__}[_anim_scope="{scope_id}"]'
+        setattr(widget, "_anim_scope_selector", selector)
     props_str = " ".join(f"{p}: {v};" for p, v in props.items())
-    selector = f'{type(widget).__name__}[_anim_scope="{scope_id}"]'
     return f"{selector} {{ {props_str} }}"
 
 

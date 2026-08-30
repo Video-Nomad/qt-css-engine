@@ -1493,6 +1493,35 @@ def test_matching_rules_cache_respects_ancestry(_app: QApplication) -> None:
     destroy(parent_b)
 
 
+def test_matching_rules_cache_respects_object_name(_app: QApplication) -> None:
+    """
+    Widgets of the same type and class but different objectNames must not share candidates.
+
+    Regression: the candidate cache was keyed by (type, class) only, so the first widget
+    resolved seeded the entry for every same-type/same-class widget — a second widget with a
+    different objectName inherited the first one's #id rules, styles and transitions.
+    """
+    engine = make_engine("""
+        #alpha { background-color: red; transition: background-color 300ms; }
+        #beta  { background-color: blue; }
+    """)
+
+    alpha = QWidget()
+    alpha.setObjectName("alpha")
+    beta = QWidget()
+    beta.setObjectName("beta")
+
+    assert [r.selector for r in engine._matcher.matching_rules(alpha)] == ["#alpha"]
+    # Resolved second, so a shared cache entry would hand it #alpha's rules.
+    assert [r.selector for r in engine._matcher.matching_rules(beta)] == ["#beta"]
+
+    hover_widget(engine, beta)
+    assert not _has_anim(engine, beta, "background-color"), "#beta must not inherit #alpha's transition"
+
+    destroy(alpha)
+    destroy(beta)
+
+
 def test_transition_engine_reload_rules(_app: QApplication) -> None:
     engine = make_engine(
         ".box { background-color: red; } .box:hover { background-color: blue; transition: background-color 300ms; }"

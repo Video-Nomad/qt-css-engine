@@ -12,7 +12,7 @@ from .types import ShadowParams, WidgetContext
 from .utils import (
     apply_opacity_to_widget,
     apply_shadow_to_widget,
-    interpolate_oklab,
+    lerp_oklab_premul,
     lerp_shadow,
     parse_box_shadow,
     parse_color,
@@ -20,6 +20,7 @@ from .utils import (
     parse_css_val,
     scoped_anim_style,
     shadow_as_transparent,
+    to_oklab_premul,
     update_shadow_ancestor,
 )
 
@@ -293,11 +294,19 @@ class ColorAnimation(QObject):
         self.start_color = self.current_color
         self.end_color = self.current_color
         self._anim_origin_color: QColor | None = QColor(self.current_color)
+        # OKLab form of the two endpoints, refreshed only when the endpoints themselves change.
+        self._start_oklab = to_oklab_premul(self.start_color)
+        self._end_oklab = self._start_oklab
 
         self.anim = QVariantAnimation(self)
         self.anim.setDuration(duration_ms)
         self.anim.setEasingCurve(easing_curve)
         self.anim.valueChanged.connect(self._on_tick)
+
+    def _sync_endpoints(self) -> None:
+        """Recompute the cached OKLab endpoints after start_color/end_color change."""
+        self._start_oklab = to_oklab_premul(self.start_color)
+        self._end_oklab = to_oklab_premul(self.end_color)
 
     @property
     def _props(self) -> dict[str, str]:
@@ -321,7 +330,7 @@ class ColorAnimation(QObject):
         if not is_qobject_alive(self.widget):
             self.anim.stop()
             return
-        self.current_color = interpolate_oklab(self.start_color, self.end_color, t)
+        self.current_color = lerp_oklab_premul(self._start_oklab, self._end_oklab, t)
         props = self._props
         props[self.prop] = self.current_color.name(QColor.NameFormat.HexArgb)
         self._request_style_flush(props, update_shadow=self.start_color.alpha() != 255 or self.end_color.alpha() != 255)
@@ -337,6 +346,7 @@ class ColorAnimation(QObject):
         self.current_color = parse_color(value_raw)
         self.start_color = self.current_color
         self.end_color = self.current_color
+        self._sync_endpoints()
         self._anim_origin_color = QColor(self.current_color)
         self._props[self.prop] = self.current_color.name(QColor.NameFormat.HexArgb)
 
@@ -359,6 +369,7 @@ class ColorAnimation(QObject):
             self._anim_origin_color = old_end
             self.start_color = old_end
             self.end_color = target_color
+            self._sync_endpoints()
             self.anim.stop()
             self.anim.setStartValue(0.0)
             self.anim.setEndValue(1.0)
@@ -372,6 +383,7 @@ class ColorAnimation(QObject):
         self._anim_origin_color = QColor(self.current_color)
         self.start_color = self.current_color
         self.end_color = target_color
+        self._sync_endpoints()
         self.anim.stop()
         self.anim.setStartValue(0.0)
         self.anim.setEndValue(1.0)
@@ -516,7 +528,10 @@ class GenericPropertyAnimation(QObject):
         else:
             self.current_val = self._effective_anim_value(val)
         written = max(0.0, self.current_val) if self.prop in NON_NEGATIVE_PROPS else self.current_val
-        written = clamp_border_radius(self.widget, self.prop, written, self.unit, self._box_props, final_box_size)
+        if final_box_size is not None:
+            # Re-clamp only when the final box differs from the one current_val was clamped
+            # against; otherwise the clamp is idempotent and just re-reads the whole box model.
+            written = clamp_border_radius(self.widget, self.prop, written, self.unit, self._box_props, final_box_size)
         props = self._props
         props[self.prop] = f"{written:.3f}{self.unit}"
         self._request_style_flush(props, update_shadow=self.prop in SIZE_PROPS)
