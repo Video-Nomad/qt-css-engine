@@ -35,7 +35,7 @@ from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QSize, Qt, QTimer
 from qt_css_engine.qt_compat.QtGui import QColor
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QFrame, QPushButton, QVBoxLayout, QWidget
-from qt_css_engine.types import Animation, EvaluationCause
+from qt_css_engine.types import Animation, EvaluationCause, ResolvedRuleState
 
 # ---------------------------------------------------------------------------
 # Helpers (mirrors test_anim.py)
@@ -247,7 +247,7 @@ def test_retarget_mid_flight_unhover_same_animation_object(_app: QApplication) -
     """
     Unhovering while animation runs must re-target the same object, not create a new one.
 
-    Transition must be on the BASE rule so `target_transitions` is populated when returning
+    Transition must be on the BASE rule so the resolved transition is populated when returning
     to base — otherwise the engine snaps instead of re-targeting.
     """
     engine = make_engine("""
@@ -341,7 +341,7 @@ def test_cleanup_orphans_cancels_delay_for_removed_prop(_app: QApplication) -> N
     assert "background-color" in ctx.pending_delays
 
     # Simulate re-evaluation where background-color is no longer in any rule
-    engine._cleanup_orphans(widget, ctx, all_animated_props=set(), base_props={})
+    engine._cleanup_orphans(ctx, ResolvedRuleState())
 
     assert "background-color" not in ctx.pending_delays, "delay must be cancelled for orphaned prop"
     destroy(widget)
@@ -467,6 +467,68 @@ def test_class_change_numeric_initial_tick_flushes_start_size_immediately(_app: 
     assert ctx.css_anim_props["width"] == f"{float(anim.anim.startValue()):.3f}px"
     assert anim.anim.state() == QAbstractAnimation.State.Running
     assert anim.anim.endValue() == pytest.approx(50.0)
+    destroy(widget)
+
+
+def test_class_change_ticks_after_the_first_frame_are_batched(_app: QApplication) -> None:
+    """
+    Only the initial class-change frame is written synchronously.
+
+    Later ticks must batch like hover-driven ones: one stylesheet write per widget per
+    event-loop turn, not one per animating property.  Writing per property made a
+    class-driven transition cost several times a hover-driven one for the same animation.
+    """
+    engine = make_engine("""
+        .box {
+            background-color: red;
+            color: white;
+            transition: background-color 300ms, color 300ms;
+        }
+        .box.on { background-color: blue; color: black; }
+    """)
+    widget = TrackedWidget()
+    widget.setProperty("class", "box")
+    widget.resize(60, 60)
+    ctx = engine._ctx(widget)
+    # Rendered state before the class change, as a real polished widget would have.
+    ctx.css_anim_props["background-color"] = "red"
+    ctx.css_anim_props["color"] = "white"
+
+    widget.setProperty("class", "box on")
+    engine._on_class_change(widget)
+    assert len(ctx.class_anim_props) == 2, "both properties should animate from the class change"
+
+    # Drive one frame of every running animation and count the resulting writes.
+    count_before = widget.setStyleSheet_count
+    for anim_obj in list(ctx.active_animations.values()):
+        anim_obj.anim.setCurrentTime(150)
+    assert widget.setStyleSheet_count == count_before, "ticks must not write synchronously"
+    assert ctx.style_flush_pending, "a batched flush should be queued instead"
+
+    engine._flush_scheduled_widget_style(widget, id(widget))
+    assert widget.setStyleSheet_count == count_before + 1, "the batch must collapse to one write"
+    assert not ctx.style_flush_pending
+    destroy(widget)
+
+
+def test_style_flush_skips_equal_style_but_restores_external_overwrite(_app: QApplication) -> None:
+    engine = make_engine(".box { color: red; transition: color 100ms; }")
+    widget = TrackedWidget()
+    widget.setProperty("class", "box")
+    ctx = engine._ctx(widget)
+    ctx.css_anim_props["color"] = "red"
+
+    engine._flush_widget_style_now(widget, ctx)
+    first_style = widget.styleSheet()
+    assert widget.setStyleSheet_count == 1
+
+    engine._flush_widget_style_now(widget, ctx)
+    assert widget.setStyleSheet_count == 1
+
+    widget.setStyleSheet("color: blue;")
+    engine._flush_widget_style_now(widget, ctx)
+    assert widget.setStyleSheet_count == 3
+    assert widget.styleSheet() == first_style
     destroy(widget)
 
 

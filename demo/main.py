@@ -1,5 +1,4 @@
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -97,7 +96,7 @@ def _dark_palette() -> QPalette:
 
 
 def main():
-    os.environ["CSS_ENGINE_EVENT_LOGGING"] = "1"
+    # os.environ["CSS_ENGINE_EVENT_LOGGING"] = "1"
     app = QApplication(sys.argv)
     app.setPalette(_dark_palette())
 
@@ -160,6 +159,24 @@ def main():
     layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
     layout.setContentsMargins(50, 50, 50, 50)
     layout.setSpacing(20)
+
+    # CPU Popup Bug Test Widget Structure (.cpu-popup .header .pin-btn)
+    cpu_popup = QFrame()
+    cpu_popup.setProperty("class", "cpu-popup")
+    cpu_popup_layout = QVBoxLayout(cpu_popup)
+    cpu_popup_layout.setContentsMargins(0, 0, 0, 0)
+
+    header = QFrame()
+    header.setProperty("class", "header")
+    header_layout = QHBoxLayout(header)
+    header_layout.setContentsMargins(0, 0, 0, 0)
+
+    pin_btn = QPushButton("Pin Btn")
+    pin_btn.setProperty("class", "pin-btn")
+
+    header_layout.addWidget(pin_btn)
+    cpu_popup_layout.addWidget(header)
+    layout.addWidget(cpu_popup)
 
     # Three buttons for testing size hint based transitions
     container = QFrame()

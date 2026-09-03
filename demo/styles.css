@@ -1,3 +1,19 @@
+.cpu-popup .header .pin-btn {
+    font-size: 14px;
+    font-family: 'Segoe Fluent Icons';
+    border: none;
+    padding: 6px;
+    color: white;
+    background: linear-gradient(0deg,
+                      rgb(94, 102, 106) 0%,
+                      rgb(41, 48, 53) 100%);
+    transition: all 300ms ease;
+}
+
+.cpu-popup .header .pin-btn:hover {
+    background: red;
+}
+
 #box {
     background-color: #444444;
     color: white;
@@ -171,13 +187,14 @@
     background-color: #444444;
     border: 3px solid darkgray;
     border-radius: 4px;
-    padding: 5px 10px;
+    padding: -4px;
     margin-right: 10px;
-    transition: min-width 1.0s ease;
-    transition: max-width 1.0s ease;
+    transition: all 1.0s ease;
 }
 
 .workspaces .ws-btn:hover {
+    padding: 6px;
+    border-radius: 99px;
     min-width: 200px;
     max-width: 200px;
 }

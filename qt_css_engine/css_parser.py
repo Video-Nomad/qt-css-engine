@@ -7,8 +7,10 @@ from tinycss2.ast import Node
 
 from .constants import (
     ANIMATION_PSEUDOS,
+    BORDER_RADIUS_PROPS,
     BORDER_STYLE_KEYWORDS,
     BORDER_WIDTH_KEYWORDS,
+    EFFECT_PROPS,
     PROP_ALIASES,
     PSEUDO_ALIASES,
     SHORTHAND_SIDES,
@@ -280,6 +282,18 @@ class StyleRule:
     transitions: list[TransitionSpec] = field(default_factory=list)
     segments: list[str] = field(default_factory=list)
     subcontrol: bool = False  # True when selector targets a ::subcontrol (::item, ::handle, …)
+
+    # Derived property-set flags. The engine tests these on every widget evaluation; scanning
+    # `properties` there turns into an O(rules x props) sweep per hover/resize/class change.
+    has_effect_props: bool = field(init=False, default=False)
+    has_cursor_prop: bool = field(init=False, default=False)
+    has_border_radius_props: bool = field(init=False, default=False)
+
+    def __post_init__(self) -> None:
+        keys = self.properties.keys()
+        self.has_effect_props = not keys.isdisjoint(EFFECT_PROPS)
+        self.has_cursor_prop = "cursor" in keys
+        self.has_border_radius_props = not keys.isdisjoint(BORDER_RADIUS_PROPS)
 
 
 def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:

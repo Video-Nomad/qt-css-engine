@@ -2,24 +2,35 @@ from qt_css_engine.qt_compat.QtWidgets import QApplication, QFrame, QStyle, QWid
 from qt_css_engine.types import InternalWriteReason, WidgetContext
 from qt_css_engine.utils import parse_css_val, scoped_anim_style
 
+# Side -> longhand property name. These lookups run hundreds of times per animation frame
+# (four sides per border-radius clamp), so the names are interned up front rather than
+# rebuilt with an f-string on every call.
+_SIDES = ("left", "right", "top", "bottom")
+_PADDING_KEYS = {side: f"padding-{side}" for side in _SIDES}
+_MARGIN_KEYS = {side: f"margin-{side}" for side in _SIDES}
+_BORDER_WIDTH_KEYS = {side: f"border-{side}-width" for side in _SIDES}
+
 
 def padding_side_px(base_props: dict[str, str], side: str) -> int:
     """Return the QSS padding in pixels for one side ('left', 'right', 'top', 'bottom')."""
-    raw = base_props.get(f"padding-{side}") or base_props.get("padding") or "0"
+    key = _PADDING_KEYS.get(side)
+    raw = base_props.get(key if key is not None else f"padding-{side}") or base_props.get("padding") or "0"
     v = parse_css_val(raw)
     return int(v) if isinstance(v, (int, float)) else 0
 
 
 def margin_side_px(base_props: dict[str, str], side: str) -> int:
     """Return the QSS margin in pixels for one side ('left', 'right', 'top', 'bottom')."""
-    raw = base_props.get(f"margin-{side}") or base_props.get("margin") or "0"
+    key = _MARGIN_KEYS.get(side)
+    raw = base_props.get(key if key is not None else f"margin-{side}") or base_props.get("margin") or "0"
     v = parse_css_val(raw)
     return int(v) if isinstance(v, (int, float)) else 0
 
 
 def _border_side_px(base_props: dict[str, str], side: str) -> int:
     """Return the QSS border width in pixels for one side ('left', 'right', 'top', 'bottom')."""
-    raw = base_props.get(f"border-{side}-width") or base_props.get("border-width") or "0"
+    key = _BORDER_WIDTH_KEYS.get(side)
+    raw = base_props.get(key if key is not None else f"border-{side}-width") or base_props.get("border-width") or "0"
     v = parse_css_val(raw)
     return int(v) if isinstance(v, (int, float)) else 0
 
@@ -95,7 +106,13 @@ def get_preferred_size_fallback(widget: QWidget, base_props: dict[str, str], pro
     return f"{max(0, content_box_px(widget, base_props, prop, px))}px"
 
 
-def get_natural_size(widget: QWidget, ctx: WidgetContext, base_props: dict[str, str], prop: str) -> str:
+def get_natural_size(
+    widget: QWidget,
+    ctx: WidgetContext,
+    base_props: dict[str, str],
+    prop: str,
+    current_raw: str | None = None,
+) -> str:
     """
     Return the widget's unconstrained natural size for prop.
 
@@ -109,11 +126,19 @@ def get_natural_size(widget: QWidget, ctx: WidgetContext, base_props: dict[str, 
 
     Falls back to sizeHint()-based measurement when the widget has no parent layout.
     """
+    # ``current_raw`` is the rendered size resolved by the engine for this evaluation.  It is
+    # passed separately instead of being written into ``css_anim_props`` just to make the
+    # measurement work, so early-return paths cannot leave a stale inline style behind.
+    restore_props = dict(ctx.css_anim_props)
+    measure_props = dict(restore_props)
+    if prop not in measure_props and current_raw not in (None, "", "auto"):
+        measure_props[prop] = current_raw
+
     axis_props = {"width", "min-width", "max-width"} if "width" in prop else {"height", "min-height", "max-height"}
-    constrained = {k for k in axis_props if k in ctx.css_anim_props}
+    constrained = {k for k in axis_props if k in measure_props}
     if not constrained:
         return get_preferred_size_fallback(widget, base_props, prop)
-    stripped = {k: v for k, v in ctx.css_anim_props.items() if k not in constrained}
+    stripped = {k: v for k, v in measure_props.items() if k not in constrained}
     parent = widget.parentWidget()
     parent_layout = parent.layout() if parent is not None else None
 
@@ -158,7 +183,9 @@ def get_natural_size(widget: QWidget, ctx: WidgetContext, base_props: dict[str, 
         else:
             result = get_preferred_size_fallback(widget, base_props, prop)
     finally:
-        widget.setStyleSheet(scoped_anim_style(widget, ctx.css_anim_props))
+        restored = scoped_anim_style(widget, restore_props)
+        ctx.applied_style = restored
+        widget.setStyleSheet(restored)
         # Restore the constrained geometry so there is no flash before animation starts.
         if parent_layout is not None:
             for w_ in ancestors:

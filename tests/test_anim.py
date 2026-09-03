@@ -1,6 +1,8 @@
 # pyright: reportPrivateUsage=false
 # pyright: reportUnknownMemberType=false
 
+import gc
+import weakref
 from collections.abc import Callable
 
 import pytest
@@ -109,7 +111,7 @@ class FixedHintWidget(QWidget):
 # ---------------------------------------------------------------------------
 
 
-def test_watch_widget_registered_on_first_animation(_app: QApplication) -> None:
+def test_context_created_on_first_animation(_app: QApplication) -> None:
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:hover { background-color: royalblue; transition: background-color 1000ms; }
@@ -117,15 +119,15 @@ def test_watch_widget_registered_on_first_animation(_app: QApplication) -> None:
     widget = QWidget()
     widget.setProperty("class", "box")
 
-    assert id(widget) not in engine._connected_widgets
+    assert id(widget) not in engine._contexts
     hover_widget(engine, widget)
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
 
     destroy(widget)
 
 
-def test_watch_widget_not_registered_without_animation(_app: QApplication) -> None:
-    """Widgets that only snap should still be registered so their context is cleaned up on destruction."""
+def test_context_created_without_running_animation(_app: QApplication) -> None:
+    """Widgets that only snap still get a context that is cleaned up on destruction."""
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:pressed { background-color: darkblue; transition: background-color 500ms; }
@@ -133,17 +135,16 @@ def test_watch_widget_not_registered_without_animation(_app: QApplication) -> No
     widget = QWidget()
     widget.setProperty("class", "box")
 
-    # hover with no hover-transition → only snap, but context is still allocated and must be watched
+    # Hover with no hover-transition → only snap, but context is still allocated.
     hover_widget(engine, widget)
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
 
     destroy(widget)
 
 
-def test_watch_widget_not_duplicated(_app: QApplication) -> None:
+def test_destroyed_cleanup_connection_is_not_duplicated(_app: QApplication) -> None:
     """Hovering multiple times must not register the destroyed signal twice.
-    If it did, _on_widget_destroyed would run twice on the second call it would
-    try to pop keys that no longer exist — the test verifies no error is raised."""
+    The context itself is the connection guard; destruction must remain idempotent."""
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:hover { background-color: royalblue; transition: background-color 1000ms; }
@@ -152,12 +153,30 @@ def test_watch_widget_not_duplicated(_app: QApplication) -> None:
     widget.setProperty("class", "box")
 
     hover_widget(engine, widget)
-    hover_widget(engine, widget)  # would double-connect without the guard in _watch_widget
+    hover_widget(engine, widget)
     hover_widget(engine, widget)
 
-    # shiboken6.delete triggers destroyed → _on_widget_destroyed runs; if double-connected
-    # it would run again on already-removed keys which would KeyError
+    # shiboken6.delete triggers destroyed → _on_widget_destroyed runs once.
     destroy(widget)  # must not raise
+
+
+def test_inactive_active_rule_widget_is_cleaned_up(_app: QApplication) -> None:
+    """An inactive widget with an :active rule must not stay strongly held by the engine."""
+    engine = make_engine(".box:active { color: red; transition: color 100ms; }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+
+    engine._seed_active_pseudo(widget)
+    wid = id(widget)
+    assert wid in engine._active_rule_widgets
+    assert wid in engine._contexts
+
+    destroy(widget)
+
+    assert wid not in engine._active_rule_widgets
+    assert wid not in engine._ctx_widgets
+    assert wid not in engine._contexts
+    assert wid not in engine._matcher.rule_cache
 
 
 def test_widget_destroyed_removed_from_active_animations(_app: QApplication) -> None:
@@ -177,7 +196,8 @@ def test_widget_destroyed_removed_from_active_animations(_app: QApplication) -> 
     assert id(widget) not in engine._contexts
 
 
-def test_widget_destroyed_removed_from_watched(_app: QApplication) -> None:
+def test_widget_cleanup_tolerates_animation_deleted_first(_app: QApplication) -> None:
+    """Qt shutdown may delete a QVariantAnimation before its widget's destroyed callback runs."""
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:hover { background-color: royalblue; transition: background-color 1000ms; }
@@ -186,11 +206,16 @@ def test_widget_destroyed_removed_from_watched(_app: QApplication) -> None:
     widget.setProperty("class", "box")
     hover_widget(engine, widget)
 
-    assert id(widget) in engine._connected_widgets
+    ctx = engine._ctx(widget)
+    anim_obj = _get_anim(engine, widget, "background-color")
+    callback = lambda: None
+    anim_obj.anim.finished.connect(callback)
+    ctx.class_anim_callbacks["background-color"] = callback
 
-    destroy(widget)
+    qt_delete(anim_obj.anim)
+    destroy(widget)  # must not access the deleted QVariantAnimation signal
 
-    assert id(widget) not in engine._connected_widgets
+    assert id(widget) not in engine._contexts
 
 
 def test_widget_destroyed_stops_running_animation(_app: QApplication) -> None:
@@ -508,8 +533,8 @@ def test_zero_duration_snaps_value_into_css_anim_props(_app: QApplication) -> No
     destroy(widget)
 
 
-def test_zero_duration_registers_watched_widget(_app: QApplication) -> None:
-    """Widget with zero-duration transition still gets registered so its context is cleaned up on destruction."""
+def test_zero_duration_creates_context(_app: QApplication) -> None:
+    """Widget with zero-duration transition still gets a context for cleanup."""
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:hover { background-color: royalblue; transition: background-color 0ms; }
@@ -518,7 +543,7 @@ def test_zero_duration_registers_watched_widget(_app: QApplication) -> None:
     widget.setProperty("class", "box")
     hover_widget(engine, widget)
 
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
     destroy(widget)
 
 
@@ -566,7 +591,6 @@ def test_id_reuse_no_ghost_animations(_app: QApplication) -> None:
     destroy(w1)
 
     assert not _anims(engine, w1)
-    assert id(w1) not in engine._connected_widgets
 
 
 # ---------------------------------------------------------------------------
@@ -1346,6 +1370,68 @@ def test_generic_border_radius_steps_reverse_keeps_qvariant_endpoints_float(_app
     destroy(widget)
 
 
+def test_color_animation_steps_reverse_retraces_without_jump(_app: QApplication) -> None:
+    """A discrete color transition must preserve its visible step when reversed mid-flight."""
+    widget = QWidget()
+    ctx = WidgetContext()
+    anim = ColorAnimation(
+        widget,
+        "background-color",
+        "red",
+        1000,
+        make_steps_curve(4, "jump-end"),
+        ctx=ctx,
+    )
+
+    anim.set_target("blue")
+    anim.anim.setCurrentTime(500)
+    color_before_reverse = QColor(anim.current_color)
+
+    anim.set_target("red")
+
+    assert anim.anim.currentTime() == 500
+    assert anim.current_color == color_before_reverse
+    assert anim.start_color == QColor("blue")
+    assert anim.end_color == QColor("red")
+
+    anim.anim.setCurrentTime(1000)
+    assert anim.current_color == QColor("red")
+    destroy(widget)
+
+
+def test_box_shadow_animation_steps_reverse_retraces_without_jump(_app: QApplication) -> None:
+    """A discrete shadow transition must reverse from the same visible step."""
+    widget = QWidget()
+    anim = BoxShadowHandle(
+        widget,
+        "0px 0px 2px red",
+        1000,
+        make_steps_curve(4, "jump-end"),
+    )
+
+    anim.set_target("8px 4px 18px blue")
+    anim.anim.setCurrentTime(500)
+    assert anim._current is not None
+    offset_before_reverse = anim._current.offset_x
+    blur_before_reverse = anim._current.blur
+    color_before_reverse = QColor(anim._current.color)
+
+    anim.set_target("0px 0px 2px red")
+
+    assert anim.anim.currentTime() == 500
+    assert anim._current is not None
+    assert anim._current.offset_x == pytest.approx(offset_before_reverse)
+    assert anim._current.blur == pytest.approx(blur_before_reverse)
+    assert anim._current.color == color_before_reverse
+
+    anim.anim.setCurrentTime(1000)
+    assert anim._current is not None
+    assert anim._current.offset_x == pytest.approx(0.0)
+    assert anim._current.blur == pytest.approx(2.0)
+    assert anim._current.color == QColor("red")
+    destroy(widget)
+
+
 def test_generic_border_radius_uses_size_hint_when_geometry_unset(_app: QApplication) -> None:
     widget = FixedHintWidget()
     widget.resize(0, 0)
@@ -1493,6 +1579,79 @@ def test_matching_rules_cache_respects_ancestry(_app: QApplication) -> None:
     destroy(parent_b)
 
 
+def test_matching_rules_cache_respects_object_name(_app: QApplication) -> None:
+    """
+    Widgets of the same type and class but different objectNames must not share candidates.
+
+    Regression: the candidate cache was keyed by (type, class) only, so the first widget
+    resolved seeded the entry for every same-type/same-class widget — a second widget with a
+    different objectName inherited the first one's #id rules, styles and transitions.
+    """
+    engine = make_engine("""
+        #alpha { background-color: red; transition: background-color 300ms; }
+        #beta  { background-color: blue; }
+    """)
+
+    alpha = QWidget()
+    alpha.setObjectName("alpha")
+    beta = QWidget()
+    beta.setObjectName("beta")
+
+    assert [r.selector for r in engine._matcher.matching_rules(alpha)] == ["#alpha"]
+    # Resolved second, so a shared cache entry would hand it #alpha's rules.
+    assert [r.selector for r in engine._matcher.matching_rules(beta)] == ["#beta"]
+
+    hover_widget(engine, beta)
+    assert not _has_anim(engine, beta, "background-color"), "#beta must not inherit #alpha's transition"
+
+    destroy(alpha)
+    destroy(beta)
+
+
+def test_class_change_invalidates_only_affected_match_cache_entries(_app: QApplication) -> None:
+    engine = make_engine(".parent .child { color: red; } .unrelated { color: blue; }")
+    parent = QWidget()
+    parent.setProperty("class", "parent")
+    child = QWidget(parent)
+    child.setProperty("class", "child")
+    unrelated = QWidget()
+    unrelated.setProperty("class", "unrelated")
+
+    engine._matcher.matching_rules(parent)
+    assert [rule.selector for rule in engine._matcher.matching_rules(child)] == [".parent .child"]
+    unrelated_rules = engine._matcher.matching_rules(unrelated)
+
+    parent.setProperty("class", "not-parent")
+    engine._matcher.invalidate_subtree(parent)
+
+    assert id(child) not in engine._matcher.rule_cache
+    assert engine._matcher.rule_cache[id(unrelated)] is unrelated_rules
+    assert engine._matcher.matching_rules(child) == []
+
+    destroy(child)
+    destroy(parent)
+    destroy(unrelated)
+
+
+def test_untracked_widget_rule_cache_entry_is_weak(_app: QApplication) -> None:
+    engine = make_engine(".box { color: red; }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    wid = id(widget)
+    widget_ref = weakref.ref(widget)
+
+    engine._matcher.matching_rules(widget)
+    assert wid in engine._matcher.rule_cache
+    assert wid not in engine._contexts
+
+    destroy(widget)
+    del widget
+    gc.collect()
+
+    assert widget_ref() is None
+    assert wid not in engine._matcher.rule_cache
+
+
 def test_transition_engine_reload_rules(_app: QApplication) -> None:
     engine = make_engine(
         ".box { background-color: red; } .box:hover { background-color: blue; transition: background-color 300ms; }"
@@ -1501,15 +1660,14 @@ def test_transition_engine_reload_rules(_app: QApplication) -> None:
     widget.setProperty("class", "box")
     hover_widget(engine, widget)
 
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
 
     # Reload rules
     _, new_rules = extract_rules(".box { background-color: blue; }")
     engine.reload_rules(new_rules)
 
-    # _connected_widgets must NOT be cleared: the destroyed-signal is still connected.
-    # Clearing without disconnecting would cause a double-connect on the next animation cycle.
-    assert id(widget) in engine._connected_widgets
+    # The context survives reload so the existing destroyed-signal connection remains live.
+    assert id(widget) in engine._contexts
     assert not any(ctx.active_animations for ctx in engine._contexts.values())
 
     _app.processEvents()  # Process the delayed timers
@@ -1613,13 +1771,10 @@ def test_reload_clears_snap_only_css_anim_props(_app: QApplication) -> None:
     destroy(widget)
 
 
-def test_reload_does_not_double_connect_destroyed_signal(_app: QApplication) -> None:
+def test_reload_reanimation_keeps_destroyed_cleanup_safe(_app: QApplication) -> None:
     """
-    reload_rules must NOT clear _connected_widgets without disconnecting signals.
-    If it does, the next animation cycle reconnects a second destroyed callback;
-    with N reloads the widget accumulates N+1 callbacks.  The observable invariant
-    is that after reload + re-animation + destroy, _on_widget_destroyed logic runs
-    cleanly (no double pop, no leftover keys).
+    Reanimation after reload must reuse the existing context connection. The observable
+    invariant is that destruction still cleans up without duplicate callbacks.
     """
     engine = make_engine("""
         .box { background-color: red; }
@@ -1628,23 +1783,21 @@ def test_reload_does_not_double_connect_destroyed_signal(_app: QApplication) -> 
     widget = QWidget()
     widget.setProperty("class", "box")
 
-    # First animation cycle — registers destroyed signal.
+    # First animation cycle — creates the context and its destroyed connection.
     hover_widget(engine, widget)
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
 
-    # Reload — _connected_widgets must NOT be cleared (signal is still live).
+    # Reload — the context and signal connection remain live.
     _, new_rules = extract_rules("""
         .box { background-color: red; }
         .box:hover { background-color: blue; transition: background-color 300ms; }
     """)
     engine.reload_rules(new_rules)
-    assert id(widget) in engine._connected_widgets, (
-        "_connected_widgets was cleared; next _connect_destroyed call will double-connect destroyed"
-    )
+    assert id(widget) in engine._contexts
 
     # Re-animate after reload.
     hover_widget(engine, widget)
-    assert id(widget) in engine._connected_widgets
+    assert id(widget) in engine._contexts
 
     # Destroy — must not raise and must leave no stale engine state.
     destroy(widget)
@@ -1864,6 +2017,47 @@ def test_step_end_alias_same_as_jump_end_1() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_box_shadow_priority_keeps_shadow_during_opacity_animation(_app: QApplication) -> None:
+    """With box-shadow priority, opacity still advances but never replaces the visible shadow effect."""
+    engine = make_engine("""
+        .box {
+            opacity: 0.7;
+            box-shadow: 0px 0px 2px red;
+            transition: opacity 1000ms linear, box-shadow 1000ms linear;
+        }
+        .box:hover {
+            opacity: 0.2;
+            box-shadow: 8px 4px 18px blue;
+        }
+    """)
+    engine.effect_priority = "box-shadow"
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+
+    ctx = engine._ctx(widget)
+    opacity_anim = _get_anim(engine, widget, "opacity")
+    shadow_anim = _get_anim(engine, widget, "box-shadow")
+    assert isinstance(opacity_anim, OpacityAnimation)
+    assert isinstance(shadow_anim, BoxShadowHandle)
+    assert isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect)
+
+    ctx.active_pseudos.add(":hover")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    opacity_anim.anim.setCurrentTime(500)
+    shadow_anim.anim.setCurrentTime(500)
+
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsDropShadowEffect)
+    assert effect.offset().x() == pytest.approx(4.0)
+    assert effect.blurRadius() == pytest.approx(10.0)
+    assert opacity_anim._current_val == pytest.approx(0.45)
+
+    opacity_anim.anim.setCurrentTime(1000)
+    assert isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect)
+    destroy(widget)
+
+
 def test_shadow_stored_when_opacity_holds_slot(_app: QApplication) -> None:
     """apply_shadow_to_widget stores _desired_shadow even when opacity blocks install."""
     widget = QWidget()
@@ -2035,6 +2229,23 @@ def test_delay_widget_destroyed_no_crash(_app: QApplication) -> None:
     assert id(widget) not in engine._contexts
 
 
+def test_widget_cleanup_tolerates_delay_timer_deleted_first(_app: QApplication) -> None:
+    """Qt shutdown may also delete a transition-delay timer before its widget."""
+    engine = make_engine("""
+        .box { background-color: steelblue; }
+        .box:hover { background-color: royalblue; transition: background-color 200ms ease 500ms; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    hover_widget(engine, widget)
+
+    timer = engine._ctx(widget).pending_delays["background-color"]
+    qt_delete(timer)
+    destroy(widget)  # must not access the deleted QTimer
+
+    assert id(widget) not in engine._contexts
+
+
 def test_delay_applies_on_second_hover_cycle(_app: QApplication, qtbot: QtBot) -> None:
     """Delay must fire on every hover, not just the first — anim_obj persists after finish."""
     engine = make_engine("""
@@ -2182,16 +2393,6 @@ def test_negative_delay_exceeds_duration_snaps(_app: QApplication) -> None:
 # ---------------------------------------------------------------------------
 # cursor property
 # ---------------------------------------------------------------------------
-
-
-def test_cursor_has_cursor_rules_flag(_app: QApplication) -> None:
-    engine = make_engine(".btn { cursor: pointer; }")
-    assert engine._matcher.has_cursor_rules is True
-
-
-def test_cursor_no_cursor_rules_flag(_app: QApplication) -> None:
-    engine = make_engine(".btn { background-color: steelblue; }")
-    assert engine._matcher.has_cursor_rules is False
 
 
 def test_cursor_applied_on_hover(_app: QApplication) -> None:
@@ -2856,6 +3057,79 @@ def test_clicked_reload_clears_state(_app: QApplication) -> None:
 # ---------------------------------------------------------------------------
 # Effect props (opacity / box-shadow) initialization and hot-reload
 # ---------------------------------------------------------------------------
+
+
+def test_engine_drives_opacity_transition_and_reverse(_app: QApplication) -> None:
+    """Opacity transitions must interpolate through QGraphicsOpacityEffect in both directions."""
+    engine = make_engine("""
+        .box { opacity: 1; transition: opacity 1000ms linear; }
+        .box:hover { opacity: 0.2; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+
+    ctx = engine._ctx(widget)
+    anim = _get_anim(engine, widget, "opacity")
+    assert isinstance(anim, OpacityAnimation)
+
+    ctx.active_pseudos.add(":hover")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    assert anim.anim.state() == QAbstractAnimation.State.Running
+    assert float(anim.anim.endValue()) == pytest.approx(0.2)
+
+    anim.anim.setCurrentTime(500)
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsOpacityEffect)
+    assert effect.opacity() == pytest.approx(0.6)
+
+    ctx.active_pseudos.clear()
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    assert float(anim.anim.startValue()) == pytest.approx(0.6)
+    assert float(anim.anim.endValue()) == pytest.approx(1.0)
+
+    anim.anim.setCurrentTime(1000)
+    assert widget.graphicsEffect() is None
+    destroy(widget)
+
+
+def test_engine_drives_box_shadow_transition_and_reverse(_app: QApplication) -> None:
+    """Box-shadow transitions must update the live Qt effect and return to the base shadow."""
+    engine = make_engine("""
+        .box { box-shadow: 0px 0px 2px red; transition: box-shadow 1000ms linear; }
+        .box:hover { box-shadow: 10px 6px 18px blue; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+
+    ctx = engine._ctx(widget)
+    anim = _get_anim(engine, widget, "box-shadow")
+    assert isinstance(anim, BoxShadowHandle)
+
+    ctx.active_pseudos.add(":hover")
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    assert anim.anim.state() == QAbstractAnimation.State.Running
+
+    anim.anim.setCurrentTime(500)
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsDropShadowEffect)
+    assert effect.offset().x() == pytest.approx(5.0)
+    assert effect.offset().y() == pytest.approx(3.0)
+    assert effect.blurRadius() == pytest.approx(10.0)
+
+    ctx.active_pseudos.clear()
+    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    assert anim.anim.state() == QAbstractAnimation.State.Running
+
+    anim.anim.setCurrentTime(1000)
+    effect = widget.graphicsEffect()
+    assert isinstance(effect, QGraphicsDropShadowEffect)
+    assert effect.offset().x() == pytest.approx(0.0)
+    assert effect.offset().y() == pytest.approx(0.0)
+    assert effect.blurRadius() == pytest.approx(2.0)
+    assert effect.color() == QColor("red")
+    destroy(widget)
 
 
 def test_effect_opacity_installed_on_initial_evaluation(_app: QApplication) -> None:
