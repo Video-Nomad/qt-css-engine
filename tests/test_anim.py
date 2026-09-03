@@ -1,6 +1,8 @@
 # pyright: reportPrivateUsage=false
 # pyright: reportUnknownMemberType=false
 
+import gc
+import weakref
 from collections.abc import Callable
 
 import pytest
@@ -156,6 +158,25 @@ def test_destroyed_cleanup_connection_is_not_duplicated(_app: QApplication) -> N
 
     # shiboken6.delete triggers destroyed → _on_widget_destroyed runs once.
     destroy(widget)  # must not raise
+
+
+def test_inactive_active_rule_widget_is_cleaned_up(_app: QApplication) -> None:
+    """An inactive widget with an :active rule must not stay strongly held by the engine."""
+    engine = make_engine(".box:active { color: red; transition: color 100ms; }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+
+    engine._seed_active_pseudo(widget)
+    wid = id(widget)
+    assert wid in engine._active_rule_widgets
+    assert wid in engine._contexts
+
+    destroy(widget)
+
+    assert wid not in engine._active_rule_widgets
+    assert wid not in engine._ctx_widgets
+    assert wid not in engine._contexts
+    assert wid not in engine._matcher.rule_cache
 
 
 def test_widget_destroyed_removed_from_active_animations(_app: QApplication) -> None:
@@ -1556,6 +1577,79 @@ def test_matching_rules_cache_respects_ancestry(_app: QApplication) -> None:
     destroy(parent_a)
     destroy(child_b)
     destroy(parent_b)
+
+
+def test_matching_rules_cache_respects_object_name(_app: QApplication) -> None:
+    """
+    Widgets of the same type and class but different objectNames must not share candidates.
+
+    Regression: the candidate cache was keyed by (type, class) only, so the first widget
+    resolved seeded the entry for every same-type/same-class widget — a second widget with a
+    different objectName inherited the first one's #id rules, styles and transitions.
+    """
+    engine = make_engine("""
+        #alpha { background-color: red; transition: background-color 300ms; }
+        #beta  { background-color: blue; }
+    """)
+
+    alpha = QWidget()
+    alpha.setObjectName("alpha")
+    beta = QWidget()
+    beta.setObjectName("beta")
+
+    assert [r.selector for r in engine._matcher.matching_rules(alpha)] == ["#alpha"]
+    # Resolved second, so a shared cache entry would hand it #alpha's rules.
+    assert [r.selector for r in engine._matcher.matching_rules(beta)] == ["#beta"]
+
+    hover_widget(engine, beta)
+    assert not _has_anim(engine, beta, "background-color"), "#beta must not inherit #alpha's transition"
+
+    destroy(alpha)
+    destroy(beta)
+
+
+def test_class_change_invalidates_only_affected_match_cache_entries(_app: QApplication) -> None:
+    engine = make_engine(".parent .child { color: red; } .unrelated { color: blue; }")
+    parent = QWidget()
+    parent.setProperty("class", "parent")
+    child = QWidget(parent)
+    child.setProperty("class", "child")
+    unrelated = QWidget()
+    unrelated.setProperty("class", "unrelated")
+
+    engine._matcher.matching_rules(parent)
+    assert [rule.selector for rule in engine._matcher.matching_rules(child)] == [".parent .child"]
+    unrelated_rules = engine._matcher.matching_rules(unrelated)
+
+    parent.setProperty("class", "not-parent")
+    engine._matcher.invalidate_subtree(parent)
+
+    assert id(child) not in engine._matcher.rule_cache
+    assert engine._matcher.rule_cache[id(unrelated)] is unrelated_rules
+    assert engine._matcher.matching_rules(child) == []
+
+    destroy(child)
+    destroy(parent)
+    destroy(unrelated)
+
+
+def test_untracked_widget_rule_cache_entry_is_weak(_app: QApplication) -> None:
+    engine = make_engine(".box { color: red; }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    wid = id(widget)
+    widget_ref = weakref.ref(widget)
+
+    engine._matcher.matching_rules(widget)
+    assert wid in engine._matcher.rule_cache
+    assert wid not in engine._contexts
+
+    destroy(widget)
+    del widget
+    gc.collect()
+
+    assert widget_ref() is None
+    assert wid not in engine._matcher.rule_cache
 
 
 def test_transition_engine_reload_rules(_app: QApplication) -> None:

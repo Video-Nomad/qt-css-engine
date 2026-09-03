@@ -93,6 +93,9 @@ class TransitionEngine(QObject):
 
         # One source of truth for all per-widget state.
         self._contexts: dict[int, WidgetContext] = {}
+        # id(widget) -> widget, mirroring _contexts so tracked widgets can be revisited without
+        # rebuilding a subtree wrapper list. Entries are dropped in _on_widget_destroyed.
+        self._ctx_widgets: dict[int, QWidget] = {}
         # Widgets that have at least one :active rule — populated at Polish time for O(1) activate/deactivate.
         self._active_rule_widgets: dict[int, QWidget] = {}
         # Checkable widget IDs already connected to toggled signal.
@@ -135,6 +138,7 @@ class TransitionEngine(QObject):
         if ctx is None:
             ctx = WidgetContext()
             self._contexts[wid] = ctx
+            self._ctx_widgets[wid] = widget
             widget.destroyed.connect(lambda: self._on_widget_destroyed(widget))
         return ctx
 
@@ -230,7 +234,7 @@ class TransitionEngine(QObject):
             return
         if not self._should_evaluate(widget):
             return
-        if not any(p in BORDER_RADIUS_PROPS for rule in self._matcher.matching_rules(widget) for p in rule.properties):
+        if not any(rule.has_border_radius_props for rule in self._matcher.matching_rules(widget)):
             return
         event_logger.debug("On resize event: %s", widget)
         self._queue_polish_evaluation(widget, force=True)
@@ -274,8 +278,9 @@ class TransitionEngine(QObject):
 
     def _on_class_change(self, widget: QWidget) -> None:
         """Handle class property change — snapshot size, unpolish/polish, and kick off animations."""
-        # Invalidate per-widget rule cache.
-        self._matcher.clear_caches()
+        # Invalidate per-widget rule caches touched by the new class. The candidate cache is
+        # keyed by widget identity and stays valid — the widget just resolves a different key.
+        self._matcher.invalidate_subtree(widget)
         # Skip widgets that no animated rule could touch.
         if not self._should_evaluate(widget):
             return
@@ -305,8 +310,20 @@ class TransitionEngine(QObject):
 
     def _on_parent_change(self, widget: QWidget) -> None:
         """Handle reparenting; ancestor-dependent selectors may now match differently."""
-        self._matcher.clear_caches()
-        for w in (widget, *widget.findChildren(QWidget)):
+        # Without descendant selectors no widget's match set can depend on where it sits in the
+        # tree, so the descendant sweep is pure waste. This matters at startup, where every
+        # layout insertion fires ParentChange for the widget being added.
+        self._matcher.invalidate_widget(widget)
+        if not self._matcher.has_descendant_selectors:
+            if self._should_evaluate(widget):
+                self._queue_polish_evaluation(widget, force=True)
+            return
+        # Only this subtree can be affected, and we are walking it anyway — evict exactly
+        # those cache entries instead of dropping every widget's cached match list.
+        subtree = (widget, *widget.findChildren(QWidget))
+        for w in subtree:
+            self._matcher.invalidate_widget(w)
+        for w in subtree:
             try:
                 if self._should_evaluate(w):
                     self._queue_polish_evaluation(w, force=True)
@@ -331,15 +348,39 @@ class TransitionEngine(QObject):
         """Clear stuck :hover/:pressed/:active states when the window loses focus."""
         # Qt may not deliver HoverLeave when a child dialog steals focus.
         _TRANSIENT_PSEUDOS = {":hover", ":pressed", ":active"} if clear_active else {":hover", ":pressed"}
-        for child in widget.findChildren(QWidget):
-            ctx = self._contexts.get(id(child))
-            if ctx is None:
+        # Scan tracked contexts rather than findChildren(): only widgets the engine already
+        # knows about can hold a stuck pseudo, and a Leave event on a window fires every time
+        # the pointer crosses it — rebuilding a wrapper list for the whole subtree each time
+        # dominated this path. Collect first; evaluation below can mutate _contexts.
+        stuck_ids = [
+            wid for wid, ctx in self._contexts.items() if not ctx.active_pseudos.isdisjoint(_TRANSIENT_PSEUDOS)
+        ]
+        for wid in stuck_ids:
+            ctx = self._contexts.get(wid)
+            child = self._ctx_widgets.get(wid)
+            if ctx is None or child is None:
                 continue
             stuck = ctx.active_pseudos & _TRANSIENT_PSEUDOS
-            if stuck:
-                event_logger.debug("Clearing stuck pseudos: %s", child)
-                ctx.active_pseudos -= stuck
-                self._evaluate_widget_state(child, cause=EvaluationCause.WINDOW_DEACTIVATE)
+            if not stuck:
+                continue
+            try:
+                if not self._is_descendant_of(child, widget):
+                    continue
+            except RuntimeError:
+                continue
+            event_logger.debug("Clearing stuck pseudos: %s", child)
+            ctx.active_pseudos -= stuck
+            self._evaluate_widget_state(child, cause=EvaluationCause.WINDOW_DEACTIVATE)
+
+    @staticmethod
+    def _is_descendant_of(widget: QWidget, ancestor: QWidget) -> bool:
+        """Return True when *widget* is a strict descendant of *ancestor* (findChildren scope)."""
+        parent: QObject | None = widget.parent()
+        while parent is not None:
+            if parent is ancestor:
+                return True
+            parent = parent.parent()
+        return False
 
     def _prepare_clicked(self, widget: QWidget, ctx: WidgetContext, updated: set[str]) -> EvaluationCause:
         """
@@ -348,14 +389,14 @@ class TransitionEngine(QObject):
         """
         if ":clicked" in ctx.active_pseudos:
             return EvaluationCause.PSEUDO_STATE  # Forward animation already running; ignore re-click.
-        if not any(":clicked" in rule.pseudo_set for rule in self._matcher.matching_rules(widget)):
+        clicked_rules = [rule for rule in self._matcher.matching_rules(widget) if ":clicked" in rule.pseudo_set]
+        if not clicked_rules:
             return EvaluationCause.PSEUDO_STATE
         updated.add(":clicked")
         ctx.clicked_anim_gen += 1
         ctx.clicked_anim_props.clear()
-        for rule in self._matcher.matching_rules(widget):
-            if ":clicked" in rule.pseudo_set:
-                ctx.clicked_anim_props.update(rule.properties.keys())
+        for rule in clicked_rules:
+            ctx.clicked_anim_props.update(rule.properties.keys())
         return EvaluationCause.CLICKED_ACTIVATION
 
     def _finish_clicked_activation(self, widget: QWidget, ctx: WidgetContext) -> None:
@@ -398,12 +439,13 @@ class TransitionEngine(QObject):
         """Add :active to the widget's pseudo set at Polish time if its window is currently active."""
         if not any(":active" in r.pseudo_set for r in self._matcher.matching_rules(widget)):
             return
+        ctx = self._ctx(widget)
         self._active_rule_widgets[id(widget)] = widget
         if not widget.isActiveWindow():
             return
         if not self._should_evaluate(widget):
             return
-        self._ctx(widget).active_pseudos.add(":active")
+        ctx.active_pseudos.add(":active")
 
     def _connect_checkable(self, widget: QWidget) -> None:
         """Connect to toggled signal for checkable buttons and sync initial :checked state."""
@@ -455,8 +497,9 @@ class TransitionEngine(QObject):
         """Remove all engine state for a destroyed widget and stop its animations."""
         wid = id(widget)
         self._connected_checkable_ids.discard(wid)
-        self._matcher.rule_cache.pop(wid, None)
+        self._matcher.invalidate_widget_id(wid)
         self._active_rule_widgets.pop(wid, None)
+        self._ctx_widgets.pop(wid, None)
         ctx = self._contexts.pop(wid, None)
         if ctx is None:
             return
@@ -541,17 +584,18 @@ class TransitionEngine(QObject):
         """Skip base-state Polish work when no rule needs engine-managed behavior."""
         if not cause.snaps_transitions or ctx.css_anim_props or ctx.active_animations:
             return False
-
-        for rule in self._matcher.matching_rules(widget):
-            if rule.transitions or "cursor" in rule.properties:
-                return False
-            if any(prop in EFFECT_PROPS or prop in BORDER_RADIUS_PROPS for prop in rule.properties):
-                return False
-        return True
+        return not any(
+            rule.transitions or rule.has_effect_props or rule.has_cursor_prop or rule.has_border_radius_props
+            for rule in self._matcher.matching_rules(widget)
+        )
 
     def _schedule_style_flush(self, widget: QWidget, ctx: WidgetContext) -> None:
         """Queue one stylesheet write for this widget after the current burst of animation ticks."""
-        if ctx.style_flush_immediate or ctx.class_anim_props:
+        # style_flush_immediate is set for the duration of a class-change evaluation so the
+        # first frame lands before Qt can paint the freshly polished class styles.  It is not
+        # extended to the rest of the animation: those ticks batch exactly like hover-driven
+        # ones, so a widget writes its stylesheet once per frame instead of once per property.
+        if ctx.style_flush_immediate:
             self._flush_widget_style_now(widget, ctx)
             return
         if ctx.style_flush_pending:
@@ -573,7 +617,16 @@ class TransitionEngine(QObject):
         """Normalize interdependent inline props and apply them as one scoped stylesheet."""
         ctx.style_flush_pending = False
         self._normalize_dependent_anim_props(widget, ctx)
-        widget.setStyleSheet(scoped_anim_style(widget, ctx.css_anim_props))
+        style = scoped_anim_style(widget, ctx.css_anim_props)
+        # setStyleSheet() re-parses the sheet and repolishes the widget and its children even
+        # when the text is unchanged. Evaluations that resolve to the same inline style are
+        # common (re-entered hover, polish sweeps, ticks that round to the same value), so
+        # skipping the redundant write is the single cheapest saving on this path.
+        # The context cache avoids a Qt getter on changing frames. The styleSheet() fallback
+        # detects application code replacing the inline stylesheet between two equal frames.
+        if style != ctx.applied_style or widget.styleSheet() != style:
+            ctx.applied_style = style
+            widget.setStyleSheet(style)
         update_shadow_ancestor(widget)
 
     def _normalize_dependent_anim_props(self, widget: QWidget, ctx: WidgetContext) -> None:
@@ -581,9 +634,14 @@ class TransitionEngine(QObject):
         Clamp radius values against the same pending box model that is about to be applied.
         """
         props = ctx.css_anim_props
+        # Resolving the target box size reads sizeHint() and re-parses the box model; skip it
+        # entirely unless a radius is actually pending, which is the case on most flushes.
+        pending_radii = props.keys() & BORDER_RADIUS_PROPS
+        if not pending_radii:
+            return
         box_props = {**ctx.style_box_props, **props}
         box_size = target_border_radius_box_size(widget, box_props)
-        for prop in BORDER_RADIUS_PROPS:
+        for prop in pending_radii:
             raw = props.get(prop)
             parsed = parse_css_numeric(raw)
             if parsed is None:
@@ -616,10 +674,28 @@ class TransitionEngine(QObject):
 
     def _collect_border_radius_props(self, widget: QWidget, ctx: WidgetContext, state: ResolvedRuleState) -> None:
         """Collect static border-radius properties that need clamping."""
+        # All four corners clamp against the same box, so resolve it at most once for the whole
+        # group instead of once per corner. Nothing in this loop can change the widget's
+        # geometry, so the resolved size stays valid across the iterations.
+        box_size: tuple[float, float] | None = None
+        box_resolved = False
         for prop in BORDER_RADIUS_PROPS:
-            if prop in state.target_props and (
-                self._needs_qt_border_radius_clamp(widget, state.target_props, prop) or prop in ctx.css_anim_props
-            ):
+            if prop not in state.target_props:
+                continue
+            # Cheap membership test first: it decides the same thing without resolving the box.
+            if prop in ctx.css_anim_props:
+                state.animated_props.add(prop)
+                continue
+            parsed = parse_css_numeric(state.target_props.get(prop))
+            if parsed is None:
+                continue
+            value, unit = parsed
+            if unit != "px":
+                continue
+            if not box_resolved:
+                box_size = target_border_radius_box_size(widget, state.target_props)
+                box_resolved = True
+            if clamp_border_radius(widget, prop, max(0.0, value), unit, state.target_props, box_size) != value:
                 state.animated_props.add(prop)
 
     def _collect_rule_state(self, widget: QWidget, ctx: WidgetContext) -> ResolvedRuleState:
@@ -660,11 +736,18 @@ class TransitionEngine(QObject):
         return state
 
     def _needs_qt_border_radius_clamp(self, widget: QWidget, target_props: dict[str, str], prop: str) -> bool:
-        raw = target_props.get(prop)
-        parsed = parse_css_numeric(raw)
+        # clamp_border_radius() returns the value untouched for anything that is not a px
+        # radius, so those cases can never report a clamp. Deciding that up front skips
+        # target_border_radius_box_size(), which resolves the whole box model (and sizeHint)
+        # and was being run for every numeric property on every evaluation.
+        if prop not in BORDER_RADIUS_PROPS:
+            return False
+        parsed = parse_css_numeric(target_props.get(prop))
         if parsed is None:
             return False
         value, unit = parsed
+        if unit != "px":
+            return False
         box_size = target_border_radius_box_size(widget, target_props)
         return clamp_border_radius(widget, prop, max(0.0, value), unit, target_props, box_size) != value
 
@@ -1279,11 +1362,15 @@ class TransitionEngine(QObject):
         target_props: dict[str, str],
     ) -> str:
         """Clamp a static numeric value when Qt's box geometry requires it."""
+        if prop not in BORDER_RADIUS_PROPS:
+            return target_raw
         parsed = parse_css_numeric(target_raw)
         if parsed is None:
             return target_raw
 
         value, unit = parsed
+        if unit != "px":
+            return target_raw
         box_size = target_border_radius_box_size(widget, target_props)
         clamped = clamp_border_radius(widget, prop, max(0.0, value), unit, target_props, box_size)
         if clamped != value and prop in NON_NEGATIVE_PROPS:
@@ -1416,6 +1503,7 @@ class TransitionEngine(QObject):
                 ctx = self._ctx(widget)
                 ctx.css_anim_props.clear()
                 ctx.active_pseudos.clear()
+                ctx.applied_style = None
                 widget.setStyleSheet("")
             except RuntimeError:
                 pass
@@ -1429,6 +1517,7 @@ class TransitionEngine(QObject):
                     ctx = self._contexts.get(id(widget))
                     if ctx is not None and ctx.css_anim_props:
                         ctx.css_anim_props.clear()
+                        ctx.applied_style = None
                         widget.setStyleSheet("")
                 except RuntimeError:
                     pass
@@ -1478,11 +1567,7 @@ class TransitionEngine(QObject):
                 widget.objectName()
                 if not self._should_evaluate(widget):
                     continue
-                if not any(
-                    prop in BORDER_RADIUS_PROPS
-                    for rule in self._matcher.matching_rules(widget)
-                    for prop in rule.properties
-                ):
+                if not any(rule.has_border_radius_props for rule in self._matcher.matching_rules(widget)):
                     continue
                 ctx = self._contexts.get(id(widget))
                 if ctx is not None and ctx.active_animations:
