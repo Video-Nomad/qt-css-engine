@@ -1633,7 +1633,9 @@ def test_class_change_invalidates_only_affected_match_cache_entries(_app: QAppli
     destroy(unrelated)
 
 
-def test_untracked_widget_rule_cache_entry_is_weak(_app: QApplication) -> None:
+def test_untracked_widget_rule_cache_entry_is_evicted_when_python_wrapper_is_collected(
+    _app: QApplication,
+) -> None:
     engine = make_engine(".box { color: red; }")
     widget = QWidget()
     widget.setProperty("class", "box")

@@ -79,10 +79,11 @@ class RuleMatcher:
         # Two-level caches
         self.type_class_rule_cache: dict[WidgetIdentity, list[StyleRule]] = {}
         self.rule_cache: dict[int, list[StyleRule]] = {}
-        # rule_cache is keyed by id(widget), which CPython reuses once a widget is freed.  A
-        # widget landing on a recycled address would otherwise inherit the dead widget's rules.
-        # These weakrefs evict the entry exactly when the address becomes reusable, which also
-        # stops the cache growing without bound in apps that churn widgets.
+        # rule_cache is keyed by id(widget), which CPython can reuse once the Python wrapper is
+        # collected. A new wrapper receiving that id would otherwise inherit the old wrapper's
+        # rules. These weakrefs deliberately track Python-wrapper lifetime, not the lifetime of
+        # the underlying C++ QObject: Qt may destroy the QObject while its wrapper remains alive.
+        # Evicting on wrapper collection prevents id reuse and bounds the cache for wrapper churn.
         self._cache_refs: dict[int, weakref.ref[QWidget]] = {}
         # Identity a cache entry was built with, so a later class change can tell whether the
         # tokens that actually changed are ones any rule uses in an ancestor position.
@@ -236,6 +237,7 @@ class RuleMatcher:
                     if cached_widget is widget or self._is_descendant_of(cached_widget, widget):
                         self.invalidate_widget_id(cached_wid)
                 except RuntimeError:
+                    # A weakref can still return a Python wrapper after Qt destroyed its QObject.
                     self.invalidate_widget_id(cached_wid)
         # Remember what the widget looks like now so the next change on it can be compared
         # against a known previous state instead of falling back to the conservative sweep.
