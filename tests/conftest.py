@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 
 from qt_css_engine import TransitionEngine
-from qt_css_engine.css_parser import extract_rules
-from qt_css_engine.matcher import RuleMatcher
+from qt_css_engine.css.parser import extract_rules
+from qt_css_engine.matching.matcher import RuleMatcher
 from qt_css_engine.qt_compat.QtCore import QCoreApplication, QEvent
 from qt_css_engine.qt_compat.QtWidgets import QApplication
 

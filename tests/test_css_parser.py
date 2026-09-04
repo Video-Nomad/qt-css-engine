@@ -3,7 +3,8 @@
 
 import pytest
 
-from qt_css_engine.css_parser import StyleRule, _is_static_gradient_prop, extract_rules
+from qt_css_engine.css.model import StyleRule
+from qt_css_engine.css.parser import _is_static_gradient_prop, extract_rules  # pyright: ignore[reportPrivateUsage]
 
 # ---------------------------------------------------------------------------
 # Helpers

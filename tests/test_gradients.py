@@ -3,7 +3,7 @@
 
 import pytest
 
-from qt_css_engine.gradients import (
+from qt_css_engine.css.gradients import (
     _fill_positions,
     _parse_direction,
     _parse_stop,

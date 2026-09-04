@@ -37,9 +37,8 @@ BORDER_WIDTH_KEYWORDS: frozenset[str] = frozenset({"thin", "medium", "thick"})
 # Qt QSS pseudo-classes that map to a canonical pseudo-class tracked by the engine.
 PSEUDO_ALIASES: dict[str, str] = {}
 
-# Animation pseudo-classes the engine knows about, in descending priority order.
+# Animation pseudo-classes the engine knows about.
 ANIMATION_PSEUDOS: frozenset[str] = frozenset({":pressed", ":hover", ":focus", ":checked", ":clicked", ":active"})
-ANIMATION_PSEUDO_PRIORITY: tuple[str, ...] = (":clicked", ":pressed", ":hover", ":focus", ":checked", ":active")
 
 # ---------------------------------------------------------------------------
 # Engine property sets
