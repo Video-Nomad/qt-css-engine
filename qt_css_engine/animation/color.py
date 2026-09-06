@@ -41,6 +41,7 @@ class ColorAnimation(StepsReversalMixin, QObject):
         self.anim.setDuration(duration_ms)
         self.anim.setEasingCurve(easing_curve)
         self.anim.valueChanged.connect(self._on_tick)
+        self.anim.finished.connect(self._on_finished)
 
     def _sync_endpoints(self) -> None:
         self._start_oklab = to_oklab_premul(self.start_color)
@@ -69,6 +70,27 @@ class ColorAnimation(StepsReversalMixin, QObject):
         props = self._props
         props[self.prop] = self.current_color.name(QColor.NameFormat.HexArgb)
         self._request_style_flush(props, update_shadow=self.start_color.alpha() != 255 or self.end_color.alpha() != 255)
+
+    def _on_finished(self) -> None:
+        """Flush the final color synchronously so it doesn't lag one frame"""
+        props = self._props
+        ctx = self._ctx
+        if ctx is None:
+            try:
+                self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+                update_shadow_ancestor(self.widget)
+            except RuntimeError:
+                pass
+            return
+        ctx.style_flush_pending = False
+        try:
+            style = scoped_anim_style(self.widget, props)
+            if style != ctx.applied_style or self.widget.styleSheet() != style:
+                ctx.applied_style = style
+                self.widget.setStyleSheet(style)
+            update_shadow_ancestor(self.widget)
+        except RuntimeError:
+            pass
 
     def update_spec(self, duration_ms: int, easing_curve: QEasingCurve) -> None:
         self.anim.setDuration(duration_ms)

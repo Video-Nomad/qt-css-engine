@@ -118,3 +118,171 @@ def test_safe_disconnect_double_disconnect_emits_no_warning(
         assert runtime_warnings == []
     finally:
         destroy(widget)
+
+
+def test_numeric_finish_explicit_flushes_immediately(_app: QApplication) -> None:
+    """Explicit-target finish must paint same turn, not lag one batched frame.
+
+    Regression for cycle .active ghost: last tick wrote 140px to the dict but
+    the stylesheet still showed the penultimate overshoot (145px) until the
+    singleShot(0) flush fired — one frame of stale layout. _on_finished must
+    force immediate flush so dict and stylesheet agree synchronously.
+    """
+    from qt_css_engine.animation.numeric import GenericPropertyAnimation
+
+    engine = make_engine(".x { transition: min-width 300ms; }")
+    widget = QWidget()
+    widget.setProperty("class", "x")
+    ctx = engine.get_context(widget)
+    try:
+        anim = GenericPropertyAnimation(
+            widget,
+            "min-width",
+            140.0,
+            300,
+            QEasingCurve.Type.Linear,
+            parent=engine,
+            ctx=ctx,
+            style_flush_callback=lambda w, c: engine.writer.schedule(w, c),
+        )
+        anim._clean_on_finish = False
+        # Simulate batched lag: dict already holds final, stylesheet still penultimate.
+        ctx.css_anim_props["min-width"] = "140.000px"
+        ctx.style_flush_pending = True
+        ctx.applied_style = 'QWidget[_anim_scope="stale"] { min-width: 145.000px; }'
+        widget.setProperty("_anim_scope", "stale")
+        widget.setStyleSheet('QWidget[_anim_scope="stale"] { min-width: 145.000px; }')
+        anim.anim.stop()
+
+        anim._on_finished()
+
+        assert ctx.style_flush_pending is False
+        assert "140.000px" in widget.styleSheet()
+        assert "145.000px" not in widget.styleSheet()
+        anim.anim.stop()
+    finally:
+        destroy(widget)
+
+
+def test_numeric_finish_clean_removes_inline_immediately(_app: QApplication) -> None:
+    """Natural-target (clean) finish must delete + paint synchronously.
+
+    Same ghost as explicit: batched delete left the old inline constraint in
+    the stylesheet for one extra frame while the dict already dropped it.
+    """
+    from qt_css_engine.animation.numeric import GenericPropertyAnimation
+
+    engine = make_engine(".x { transition: min-width 300ms; }")
+    widget = QWidget()
+    widget.setProperty("class", "x")
+    ctx = engine.get_context(widget)
+    try:
+        anim = GenericPropertyAnimation(
+            widget,
+            "min-width",
+            27.0,
+            300,
+            QEasingCurve.Type.Linear,
+            parent=engine,
+            ctx=ctx,
+            style_flush_callback=lambda w, c: engine.writer.schedule(w, c),
+        )
+        anim._clean_on_finish = True
+        ctx.css_anim_props["min-width"] = "27.000px"
+        ctx.style_flush_pending = True
+        widget.setProperty("_anim_scope", "stale2")
+        widget.setStyleSheet('QWidget[_anim_scope="stale2"] { min-width: 27.000px; }')
+        ctx.applied_style = widget.styleSheet()
+        anim.anim.stop()
+
+        anim._on_finished()
+
+        assert "min-width" not in ctx.css_anim_props
+        assert ctx.style_flush_pending is False
+        assert "min-width" not in widget.styleSheet()
+        anim.anim.stop()
+    finally:
+        destroy(widget)
+
+
+def test_color_finish_flushes_immediately(_app: QApplication) -> None:
+    """Color finish must not leave the end color pending one batched frame."""
+    from qt_css_engine.animation.color import ColorAnimation
+
+    engine = make_engine(".x { transition: background-color 300ms; }")
+    widget = QWidget()
+    widget.setProperty("class", "x")
+    ctx = engine.get_context(widget)
+    try:
+        anim = ColorAnimation(
+            widget,
+            "background-color",
+            "#2e2e38",
+            300,
+            QEasingCurve.Type.Linear,
+            parent=engine,
+            ctx=ctx,
+            style_flush_callback=lambda w, c: engine.writer.schedule(w, c),
+        )
+        anim.set_target("#4d88ff")
+        anim.anim.stop()
+        # Simulate lag: dict holds end color, stylesheet still shows start.
+        end_name = anim.end_color.name()
+        ctx.css_anim_props["background-color"] = end_name
+        ctx.style_flush_pending = True
+        widget.setProperty("_anim_scope", "cstale")
+        widget.setStyleSheet('QWidget[_anim_scope="cstale"] { background-color: #2e2e38; }')
+        ctx.applied_style = widget.styleSheet()
+
+        anim._on_finished()
+
+        assert ctx.style_flush_pending is False
+        assert end_name in widget.styleSheet()
+        anim.anim.stop()
+    finally:
+        destroy(widget)
+
+
+def test_post_clean_noop_skips_natural_measurement(_app: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Post-clean CLASS_ANIMATION_FINISH must not measure natural size.
+
+    After clean_on_finish drops the inline constraint, resolving would call
+    get_natural_size (strip/restore + parent-layout activates with
+    updatesEnabled toggling) only for _is_natural_noop to discard it. That
+    shared-parent thrash at finish time paints as a one-frame ghost.
+    """
+    from qt_css_engine.engine.evaluation import EvaluationCause
+    from qt_css_engine.engine.evaluator import Evaluation
+    from qt_css_engine.types import ResolvedRuleState
+
+    engine = make_engine(".x { transition: min-width 300ms; }")
+    widget = QWidget()
+    widget.setProperty("class", "x")
+    ctx = engine.get_context(widget)
+    try:
+        from qt_css_engine.animation.numeric import GenericPropertyAnimation
+
+        anim = GenericPropertyAnimation(
+            widget, "min-width", 33.0, 200, QEasingCurve.Type.Linear, parent=engine, ctx=ctx
+        )
+        ctx.active_animations["min-width"] = anim
+        ctx.css_anim_props.clear()  # post-clean: inline already removed
+        anim.anim.stop()
+
+        calls: list[str] = []
+        orig_natural = engine.evaluator.get_natural_size
+
+        def spy(widget_: QWidget, base_props_: dict[str, str], prop_: str, current_raw_: str | None = None) -> str:
+            calls.append(prop_)
+            return orig_natural(widget_, base_props_, prop_, current_raw_)
+
+        monkeypatch.setattr(engine.evaluator, "get_natural_size", spy)
+        needs_update = engine.evaluator.apply_prop(
+            Evaluation(widget, ctx, ResolvedRuleState(), EvaluationCause.CLASS_ANIMATION_FINISH),
+            "min-width",
+        )
+        assert needs_update is False
+        assert calls == [], f"post-clean noop must not measure natural size, got {calls}"
+        anim.anim.stop()
+    finally:
+        destroy(widget)

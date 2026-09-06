@@ -130,6 +130,27 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
         props[self.prop] = f"{written:.3f}{self.unit}"
         self._request_style_flush(props, update_shadow=self.prop in SIZE_PROPS)
 
+    def _flush_final_immediate(self, *, update_shadow: bool = False) -> None:
+        """Flush the final frame synchronously so it paints same turn, not next."""
+        props = self._props
+        ctx = self._ctx
+        if ctx is None:
+            try:
+                self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+                update_shadow_ancestor(self.widget)
+            except RuntimeError:
+                pass
+            return
+        ctx.style_flush_pending = False
+        try:
+            style = scoped_anim_style(self.widget, props)
+            if style != ctx.applied_style or self.widget.styleSheet() != style:
+                ctx.applied_style = style
+                self.widget.setStyleSheet(style)
+            update_shadow_ancestor(self.widget)
+        except RuntimeError:
+            pass
+
     def _on_finished(self) -> None:
         if self.prop in BORDER_RADIUS_PROPS and self._target_box_size is not None:
             try:
@@ -138,13 +159,20 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
                 pass
         self._target_box_size = None
         if not self._clean_on_finish:
+            # Explicit target: last tick's value is already in the dict but may
+            # still be pending batched flush — push it now so layout settles
+            # same frame instead of showing penultimate for one extra paint.
+            try:
+                self._flush_final_immediate(update_shadow=self.prop in SIZE_PROPS)
+            except RuntimeError:
+                pass
             return
         self._clean_on_finish = False
         props = self._props
         if self.prop in props:
             del props[self.prop]
             try:
-                self._request_style_flush(props, update_shadow=True)
+                self._flush_final_immediate(update_shadow=True)
             except RuntimeError:
                 pass
 

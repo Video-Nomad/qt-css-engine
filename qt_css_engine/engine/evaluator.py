@@ -136,6 +136,8 @@ class WidgetEvaluator:
         self._engine.delays.cancel(ev.ctx, prop)
         if self._is_class_anim_blocked(ev, prop):
             return False
+        if self._is_post_clean_noop(ev, prop):
+            return False
         resolved = self.resolve_property(ev, prop)
         if resolved is None:
             return False
@@ -153,6 +155,14 @@ class WidgetEvaluator:
     def _is_class_anim_blocked(ev: Evaluation, prop: str) -> bool:
         """A class-driven animation owns prop until it finishes; other causes must not steal it."""
         return not ev.cause.is_class_driven and prop in ev.ctx.class_anim_props
+
+    @staticmethod
+    def _is_post_clean_noop(ev: Evaluation, prop: str) -> bool:
+        """Post-clean finish needs no resolve and no natural-size measurement."""
+        if prop not in SIZE_PROPS or prop in ev.ctx.css_anim_props or prop not in ev.ctx.active_animations:
+            return False
+        target_raw = ev.state.target_props.get(prop) or ev.state.base_props.get(prop)
+        return not target_raw or target_raw == "auto"
 
     def resolve_property(self, ev: Evaluation, prop: str) -> ResolvedProperty | None:
         """Resolve current/target/animation/spec for one property."""
