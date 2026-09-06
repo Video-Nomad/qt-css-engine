@@ -6,6 +6,12 @@ import re
 from qt_css_engine.qt_compat.QtGui import QColor
 from qt_css_engine.types import ShadowParams
 
+_RGB_RE = re.compile(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)")
+_HSL_RE = re.compile(r"hsla?\(\s*(\d+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%(?:\s*,\s*([\d.]+))?\s*\)")
+_INSET_RE = re.compile(r"\binset\b", re.IGNORECASE)
+_FUNC_COLOR_RE = re.compile(r"((?:rgba?|hsla?)\s*\([^)]*\))", re.IGNORECASE)
+_LENGTH_TOKEN_RE = re.compile(r"(-?[\d.]+)(?:px|em|rem|%)?")
+
 
 def _to_linear(c: float) -> float:
     return ((c + 0.055) / 1.055) ** 2.4 if c >= 0.04045 else c / 12.92
@@ -104,12 +110,12 @@ def parse_color(val: str) -> QColor:
     if c.isValid():
         return c
     s_lower = s.lower()
-    m = re.fullmatch(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)", s_lower)
+    m = _RGB_RE.fullmatch(s_lower)
     if m:
         r, g, b = int(m.group(1)), int(m.group(2)), int(m.group(3))
         a = round(float(m.group(4)) * 255) if m.group(4) is not None else 255
         return QColor(r, g, b, a)
-    m = re.fullmatch(r"hsla?\(\s*(\d+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%(?:\s*,\s*([\d.]+))?\s*\)", s_lower)
+    m = _HSL_RE.fullmatch(s_lower)
     if m:
         h = int(m.group(1))
         s_val = round(float(m.group(2)) * 255 / 100)
@@ -123,7 +129,7 @@ def parse_box_shadow(val: str) -> ShadowParams | None:
     val = val.strip()
     if not val or val == "none":
         return None
-    if re.search(r"\binset\b", val, re.IGNORECASE):
+    if _INSET_RE.search(val):
         return None
     depth = 0
     for i, ch in enumerate(val):
@@ -135,13 +141,13 @@ def parse_box_shadow(val: str) -> ShadowParams | None:
             val = val[:i]
             break
     color_str: str | None = None
-    m = re.search(r"((?:rgba?|hsla?)\s*\([^)]*\))", val, re.IGNORECASE)
+    m = _FUNC_COLOR_RE.search(val)
     if m:
         color_str = m.group(1)
         val = (val[: m.start()] + val[m.end() :]).strip()
     lengths: list[float] = []
     for tok in val.split():
-        num_m = re.fullmatch(r"(-?[\d.]+)(?:px|em|rem|%)?", tok)
+        num_m = _LENGTH_TOKEN_RE.fullmatch(tok)
         if num_m:
             lengths.append(float(num_m.group(1)))
         elif color_str is None and (tok.startswith("#") or tok.isalpha()):

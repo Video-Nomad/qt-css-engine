@@ -20,6 +20,8 @@ _GRADIENT_VALUE_RE = re.compile(
     r"\b(?:q(?:linear|radial|conical)gradient|(?:linear|radial|conic)-gradient)\s*\(",
     re.IGNORECASE,
 )
+_ATTR_BLOCK_RE = re.compile(r"\[[^\]]*\]")
+_WS_RE = re.compile(r"\s+")
 
 
 def _normalize_prop(name: str) -> str:
@@ -228,7 +230,7 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
                 # Attr-conditional base (`.item[active=true]`) inherits the
                 # transitions declared on its attr-stripped base (`.item`),
                 # mirroring how `:hover` reuses the base rule's transitions.
-                stripped = re.sub(r"\s+", " ", re.sub(r"\[[^\]]*\]", "", base_part)).strip()
+                stripped = _WS_RE.sub(" ", _ATTR_BLOCK_RE.sub("", base_part)).strip()
                 animated_props |= animated_map.get(stripped, set())
         new_body_lines: list[str] = []
         for decl in decls:

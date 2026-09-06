@@ -7,6 +7,8 @@ from tinycss2.ast import Node
 
 from qt_css_engine.constants import BORDER_STYLE_KEYWORDS, BORDER_WIDTH_KEYWORDS, SHORTHAND_SIDES
 
+_LEADING_DIGIT_RE = re.compile(r"^\d")
+
 
 def _serialize_value(tokens: list[Node]) -> str:
     return tinycss2.serialize(tokens).strip()
@@ -20,7 +22,7 @@ def _split_css_components(value: str) -> list[str]:
 def _classify_border_token(token: str) -> str:
     if token in BORDER_STYLE_KEYWORDS:
         return "style"
-    if token in BORDER_WIDTH_KEYWORDS or re.match(r"^\d", token):
+    if token in BORDER_WIDTH_KEYWORDS or _LEADING_DIGIT_RE.match(token):
         return "width"
     return "color"
 
