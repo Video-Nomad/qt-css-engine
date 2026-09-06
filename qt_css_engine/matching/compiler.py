@@ -26,6 +26,7 @@ class WidgetIdentity(NamedTuple):
 
 
 _ATTR_RE = re.compile(r"\[([^\]]+)\]")
+_ID_RE = re.compile(r"#([^.#\s\[:]+)")
 # name, optional operator (~=, |=, ^=, $=, *=, =, !=), optional value (quoted or bare)
 _ATTR_CONTENT_RE = re.compile(
     r"""^\s*([A-Za-z_][\w\-.]*)          # property name
@@ -86,9 +87,45 @@ def attr_matches(actual: object, cond: AttrCondition) -> bool:
 def compile_segment(segment: str) -> CompiledSegment:
     stripped = _ATTR_RE.sub("", segment)
     attrs = parse_attr_conditions(segment)
+    # Split off `#id` first so `Type#id`, `#id.class` and `.class#id` all work.
+    # Only the first `#id` is significant (Qt objectNames are unique per widget).
+    id_match = _ID_RE.search(stripped)
+    obj_name: str | None = id_match.group(1) or None if id_match else None
+    if id_match:
+        stripped = stripped[: id_match.start()] + stripped[id_match.end() :]
     parts = stripped.split(".")
     head = parts[0]
     classes = frozenset(c for c in parts[1:] if c)
-    if head.startswith("#"):
-        return CompiledSegment(head[1:] or None, None, classes, attrs)
-    return CompiledSegment(None, head or None, classes, attrs)
+    if not head or head == "*":
+        return CompiledSegment(obj_name, None, classes, attrs)
+    return CompiledSegment(obj_name, head, classes, attrs)
+
+
+def compute_specificity(base_selector: str, pseudo_set: frozenset[str]) -> tuple[int, int, int]:
+    """CSS2 a-b-c specificity for one rule (Qt docs follow CSS2).
+
+    a = #ID selectors, b = .classes + [attrs] + :pseudos, c = Type names.
+    Sub-controls (`::...`) and universal `*` contribute nothing.
+    """
+    a = 0
+    b = len(pseudo_set)
+    c = 0
+    for segment in base_selector.split():
+        # One [attr] block = one b, even for unsupported operators.
+        b += len(parse_attr_conditions(segment))
+        no_attrs = _ATTR_RE.sub("", segment)
+        # IDs (after Type#id fix there is at most one per segment, but count all).
+        ids = _ID_RE.findall(no_attrs)
+        a += len(ids)
+        no_id = _ID_RE.sub("", no_attrs)
+        # Sub-control name after `::` is a pseudo-element: ignored.
+        no_sub = no_id.split("::", 1)[0]
+        # Single-colon pseudos should already be split off, but be defensive:
+        # anything after a leftover `:` is not a type name.
+        head = no_sub.split(":", 1)[0]
+        parts = head.split(".")
+        tag = parts[0].strip()
+        if tag and tag != "*":
+            c += 1
+        b += sum(1 for cls in parts[1:] if cls.strip())
+    return (a, b, c)

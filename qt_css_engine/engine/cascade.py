@@ -17,7 +17,12 @@ class CascadeEvaluator:
 
     def collect(self, widget: QWidget, ctx: WidgetContext) -> ResolvedRuleState:
         state = ResolvedRuleState()
-        trans_priority: dict[str, int] = {}
+        # Per-prop winners: CSS2 (specificity, order) with the engine's pseudo
+        # priority kept as a tiebreak inside equal specificity so :pressed still
+        # beats :hover (and :clicked beats :pressed) regardless of source order.
+        base_best: dict[str, tuple[tuple[int, int, int], int]] = {}
+        target_best: dict[str, tuple[tuple[int, int, int], int, int]] = {}
+        trans_best: dict[str, tuple[tuple[int, int, int], int, int]] = {}
         pseudos = ctx.active_pseudos
         for rule in self._matcher.matching_rules(widget):
             attrs_match = self._matcher.rule_attrs_match(widget, rule) if rule.has_attrs else True
@@ -25,16 +30,26 @@ class CascadeEvaluator:
             priority = sum(self._priority.get(p, 0) for p in rule.pseudo_set) if rule_in_target else -1
             for trans in rule.transitions:
                 state.animated_props.add(trans.prop)
-                if rule_in_target and priority >= trans_priority.get(trans.prop, -1):
-                    state.transitions[trans.prop] = trans
-                    trans_priority[trans.prop] = priority
+                if rule_in_target:
+                    key = (rule.specificity, priority, rule.order)
+                    if key >= trans_best.get(trans.prop, ((-1, -1, -1), -1, -1)):
+                        state.transitions[trans.prop] = trans
+                        trans_best[trans.prop] = key
             # Attr-conditional rules ([active=true]) are target-only like pseudo
             # rules: the resting base must not shift with dynamic state, otherwise
             # the animation start point would already equal the target.
             if not rule.pseudo_set and not rule.has_attrs:
-                state.base_props.update(rule.properties)
+                for prop, val in rule.properties.items():
+                    key = (rule.specificity, rule.order)
+                    if key >= base_best.get(prop, ((-1, -1, -1), -1)):
+                        state.base_props[prop] = val
+                        base_best[prop] = key
             if rule_in_target:
-                state.target_props.update(rule.properties)
+                for prop, val in rule.properties.items():
+                    key = (rule.specificity, priority, rule.order)
+                    if key >= target_best.get(prop, ((-1, -1, -1), -1, -1)):
+                        state.target_props[prop] = val
+                        target_best[prop] = key
         if "all" in state.animated_props:
             self.expand_all(ctx, state)
         for prop in EFFECT_PROPS:

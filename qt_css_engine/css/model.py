@@ -27,6 +27,9 @@ class StyleRule:
     segments: list[str] = field(default_factory=list)
     subcontrol: bool = False
     has_attrs: bool = False
+    # CSS2 a-b-c specificity (Qt docs follow CSS2) + source order for ties.
+    specificity: tuple[int, int, int] = (0, 0, 0)
+    order: int = 0
 
     has_effect_props: bool = field(init=False, default=False)
     has_cursor_prop: bool = field(init=False, default=False)

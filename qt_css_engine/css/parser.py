@@ -14,6 +14,7 @@ from qt_css_engine.css.gradients import translate_gradients
 from qt_css_engine.css.model import StyleRule, TransitionSpec
 from qt_css_engine.css.selector import split_selector
 from qt_css_engine.css.shorthand import expand_shorthand, should_strip_prop, transition_longhands
+from qt_css_engine.matching.compiler import compute_specificity
 
 _GRADIENT_VALUE_RE = re.compile(
     r"\b(?:q(?:linear|radial|conical)gradient|(?:linear|radial|conic)-gradient)\s*\(",
@@ -185,6 +186,7 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
         for selector in (s.strip() for s in raw_selector.split(",")):
             base, pseudo_set = split_selector(selector)
             is_subcontrol = "::" in base
+            order = len(rules)
             rules.append(
                 StyleRule(
                     selector=selector,
@@ -195,6 +197,8 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
                     segments=base.split(),
                     subcontrol=is_subcontrol,
                     has_attrs="[" in base,
+                    specificity=compute_specificity(base, pseudo_set),
+                    order=order,
                 )
             )
 

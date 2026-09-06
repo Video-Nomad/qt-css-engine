@@ -790,6 +790,61 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     border-color: #33aa55;
 }
 
+/* ------------------- attributes & specificity -------------------- */
+.attr-btn,
+.attr-btn-quoted {
+    background-color: #2e2e38;
+    color: white;
+    border: 2px solid #55555f;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
+    transition: background-color 300ms ease, border-color 300ms ease;
+}
+
+/* Bare vs quoted attr values are equivalent — both match setProperty(..., True). */
+.attr-btn[customAttr=true] {
+    background-color: #1a6b3a;
+    border-color: #33aa55;
+}
+
+.attr-btn-quoted[customAttr="true"] {
+    background-color: #1a6b3a;
+    border-color: #33aa55;
+}
+
+/* Specificity: #spec-id (1,0,0) beats .spec-btn (0,1,0) even though the class
+   rule comes later in source order. */
+#spec-id {
+    background-color: #1a6bcc;
+}
+
+.spec-btn {
+    background-color: #8a2a2a;
+    color: white;
+    border: 2px solid #55555f;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
+    transition: background-color 400ms ease;
+}
+
+/* Type#id: only a QPushButton named typeid-btn matches. */
+QPushButton#typeid-btn {
+    background-color: #2e2e38;
+    color: white;
+    border: 2px solid #55555f;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
+    transition: background-color 300ms ease;
+}
+
+QPushButton#typeid-btn:hover {
+    background-color: #5a2a8a;
+    border-color: #9b51e0;
+}
+
 /* ------------------------------ playground ----------------------------- */
 .dynamic-host {
     background-color: transparent;

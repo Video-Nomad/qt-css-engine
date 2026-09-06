@@ -247,6 +247,7 @@ def main() -> None:
         ("size", "Size and shape"),
         ("dynamic", "Dynamic classes"),
         ("nesting", "Nesting and scope"),
+        ("attrs", "Attributes & specificity"),
         ("playground", "Playground"),
     ]
 
@@ -300,7 +301,7 @@ def main() -> None:
         "Tab through it, click it.",
     )
     stats_frame, stats_row = make_row()
-    for stat in ("9 sections", "6 pseudo-states", "20+ animatable props", ":clicked round-trip"):
+    for stat in ("10 sections", "6 pseudo-states", "20+ animatable props", ":clicked round-trip"):
         stat_lbl = QLabel(stat)
         stat_lbl.setProperty("class", "stat")
         stats_row.addWidget(stat_lbl)
@@ -702,7 +703,52 @@ def main() -> None:
     content_layout.addWidget(nest_card)
     cards["nesting"] = nest_card
 
-    # ------------------------------------------------- 9. playground
+    # ------------------------------------------------- 9. attributes & specificity
+    attr_card, attr_body = make_card(
+        "Attributes & specificity",
+        "Dynamic properties drive styles via [attr=value] (bare or quoted). "
+        "IDs beat classes regardless of source order; Type#id needs both to match.",
+    )
+    attr_row_frame, attr_row = make_row(spacing=8)
+    attr_btn = QPushButton("Attr [customAttr=true] — click to toggle")
+    attr_btn.setProperty("class", "attr-btn")
+    attr_btn.setProperty("customAttr", False)
+    attr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    attr_row.addWidget(attr_btn)
+    attr_quoted_btn = QPushButton('Quoted [customAttr="true"] — click to toggle')
+    attr_quoted_btn.setProperty("class", "attr-btn-quoted")
+    attr_quoted_btn.setProperty("customAttr", False)
+    attr_quoted_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    attr_row.addWidget(attr_quoted_btn)
+    attr_body.addWidget(attr_row_frame)
+
+    def _toggle_attr(btn: QPushButton) -> Callable[[bool], None]:
+        def _go(_checked: bool = False) -> None:
+            btn.setProperty("customAttr", not bool(btn.property("customAttr")))
+
+        return _go
+
+    attr_btn.clicked.connect(_toggle_attr(attr_btn))
+    attr_quoted_btn.clicked.connect(_toggle_attr(attr_quoted_btn))
+    attr_body.addWidget(make_hint("Click: setProperty flips customAttr — background eases green/gray."))
+
+    spec_row_frame, spec_row = make_row(spacing=8)
+    spec_btn = QPushButton("ID wins (.spec-btn + #spec-id)")
+    spec_btn.setObjectName("spec-id")
+    spec_btn.setProperty("class", "spec-btn")
+    spec_row.addWidget(spec_btn)
+    typeid_btn = QPushButton("Type#id (QPushButton#typeid-btn) — hover me")
+    typeid_btn.setObjectName("typeid-btn")
+    typeid_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    spec_row.addWidget(typeid_btn)
+    attr_body.addWidget(spec_row_frame)
+    attr_body.addWidget(
+        make_hint("#spec-id stays blue even though .spec-btn comes later. The Type#id button only matches QPushButton + that name.")
+    )
+    content_layout.addWidget(attr_card)
+    cards["attrs"] = attr_card
+
+    # ------------------------------------------------- 10. playground
     play_card, play_body = make_card(
         "Playground",
         "Runtime widgets, visibility toggles and window focus. New widgets are picked up via Polish events.",
