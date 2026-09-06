@@ -31,6 +31,20 @@ class EventRouter:
         return property_name is not None and getattr(property_name, "data", lambda: b"")() == b"class"
 
     @staticmethod
+    def changed_property_name(event: QEvent) -> str | None:
+        """Return the dynamic-property name for a DynamicPropertyChange event, if any."""
+        property_name = getattr(event, "propertyName", lambda: None)()
+        if property_name is None:
+            return None
+        data = getattr(property_name, "data", lambda: b"")()
+        if not data:
+            return None
+        try:
+            return bytes(data).decode("utf-8", "ignore")
+        except TypeError, ValueError:
+            return None
+
+    @staticmethod
     def dispatch(engine: TransitionEngine, widget: QWidget, event: QEvent, event_type: QEvent.Type) -> None:
         """Route a relevant Qt event to the focused handler for that event."""
         if EventRouter.is_pseudo(event_type):
@@ -44,6 +58,9 @@ class EventRouter:
             case QEvent.Type.DynamicPropertyChange:
                 if EventRouter.is_class_property_change(event):
                     engine.on_class_change(widget)
+                elif (attr_name := EventRouter.changed_property_name(event)) is not None:
+                    if attr_name in engine.matcher.tracked_attrs:
+                        engine.on_attr_change(widget)
             case QEvent.Type.ParentChange:
                 engine.on_parent_change(widget)
             case QEvent.Type.WindowActivate:

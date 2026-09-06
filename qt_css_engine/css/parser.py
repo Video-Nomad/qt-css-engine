@@ -194,6 +194,7 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
                     transitions=[] if is_subcontrol else transitions,
                     segments=base.split(),
                     subcontrol=is_subcontrol,
+                    has_attrs="[" in base,
                 )
             )
 
@@ -212,10 +213,19 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
         selector: str = tinycss2.serialize(raw_rule.prelude).strip()
         decls = tinycss2.parse_declaration_list(raw_rule.content, skip_comments=True, skip_whitespace=True)
         _, pseudo_set = split_selector(selector.split(",")[0].strip())
+        # Attr-conditional blocks ([active=true]) are engine-managed like pseudo
+        # blocks: animated props are stripped so Qt doesn't fight the transition.
+        has_attr_block = "[" in selector
         animated_props: set[str] = set()
         for sel_part in (s.strip() for s in selector.split(",")):
             base_part, _ = split_selector(sel_part)
             animated_props |= animated_map.get(base_part, set())
+            if "[" in base_part:
+                # Attr-conditional base (`.item[active=true]`) inherits the
+                # transitions declared on its attr-stripped base (`.item`),
+                # mirroring how `:hover` reuses the base rule's transitions.
+                stripped = re.sub(r"\s+", " ", re.sub(r"\[[^\]]*\]", "", base_part)).strip()
+                animated_props |= animated_map.get(stripped, set())
         new_body_lines: list[str] = []
         for decl in decls:
             if decl.type != "declaration":
@@ -228,7 +238,7 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
             if p_name in ("box-shadow", "cursor"):
                 continue
             if (
-                pseudo_set
+                (pseudo_set or has_attr_block)
                 and not _is_static_gradient_prop(p_name, p_val)
                 and ("all" in animated_props or should_strip_prop(p_name, animated_props))
             ):

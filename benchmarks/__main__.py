@@ -25,6 +25,8 @@ from dataclasses import dataclass
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from benchmarks import (
+    bench_attr_change,
+    bench_attr_matching,
     bench_class_anim_frames,
     bench_class_change,
     bench_cold_matching,
@@ -48,7 +50,11 @@ ALL_BENCHES: list[BenchEntry] = [
     BenchEntry("cold", bench_cold_matching.NAME, bench_cold_matching.benchmark),
     BenchEntry("warm", bench_warm_matching.NAME, bench_warm_matching.benchmark),
     BenchEntry("initial", bench_initial_eval.NAME, bench_initial_eval.benchmark),
+    BenchEntry("attr_cold", bench_attr_matching.NAME_COLD, bench_attr_matching.benchmark_cold),
+    BenchEntry("attr_warm", bench_attr_matching.NAME_WARM, bench_attr_matching.benchmark_warm),
+    BenchEntry("attr_initial", bench_attr_matching.NAME_INITIAL, bench_attr_matching.benchmark_initial),
     BenchEntry("class_change", bench_class_change.NAME, bench_class_change.benchmark),
+    BenchEntry("attr", bench_attr_change.NAME, bench_attr_change.benchmark),
     BenchEntry("class_anim", bench_class_anim_frames.NAME, bench_class_anim_frames.benchmark),
     BenchEntry("hover_anim", bench_hover_frames.NAME, bench_hover_frames.benchmark),
     BenchEntry("resize", bench_resize_storm.NAME, bench_resize_storm.benchmark),

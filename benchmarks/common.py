@@ -82,7 +82,7 @@ def get_app() -> QApplication:
 # ---------------------------------------------------------------------------
 
 
-def build_heavy_stylesheet(*, num_anim: int = 40, total_rules: int = 458) -> str:
+def build_heavy_stylesheet(*, num_anim: int = 40, total_rules: int = 458, num_attr: int = 0) -> str:
     """Return a deterministic stylesheet with *total_rules* rules.
 
     Layout per animated item (8 rules each → 320 for 40 items):
@@ -96,6 +96,10 @@ def build_heavy_stylesheet(*, num_anim: int = 40, total_rules: int = 458) -> str
         .wrapper .container .item-N.on
 
     Remaining rules are noise (tag / id / class / descendant) to reach 458.
+
+    When *num_attr* > 0, that many extra `.item-N[active=true]` rules are
+    appended on top (changing the same 5 animating props as `.on`), so
+    attr-selector workloads measure 458 + *num_attr* rules.
     """
     parts: list[str] = []
 
@@ -179,6 +183,21 @@ def build_heavy_stylesheet(*, num_anim: int = 40, total_rules: int = 458) -> str
         parts.append(f".noise-container .noise-{n % 100} {{\n    padding: {2 + n % 4}px;\n}}")
 
     assert len(parts) == total_rules, f"{len(parts)} != {total_rules}"
+    if num_attr:
+        # Attr-selector rules on top: cycle over animated items so each
+        # `.item-N[active=true]` block mirrors the `.on` values.
+        for n in range(num_attr):
+            i = n % num_anim
+            parts.append(
+                f".item-{i}[active=true] {{\n"
+                f"    background-color: #ff4444;\n"
+                f"    color: #000000;\n"
+                f"    min-width: 140px;\n"
+                f"    max-width: 140px;\n"
+                f"    font-size: 16px;\n"
+                f"}}"
+            )
+        assert len(parts) == total_rules + num_attr
     return "\n\n".join(parts)
 
 
@@ -212,8 +231,13 @@ def create_heavy_hierarchy(
     *,
     num_anim: int = 40,
     total_widgets: int = 321,
+    active_every: int = 0,
 ) -> HeavyHierarchy:
     """Create an offscreen widget tree with *total_widgets* widgets.
+
+    When *active_every* > 0, every Nth animated widget gets
+    `active=true`, so attr-selector workloads exercise both the
+    matching and non-matching branches.
 
     Caller is responsible for deleting root via qt_delete or deleteLater.
     """
@@ -260,6 +284,8 @@ def create_heavy_hierarchy(
         btn = QPushButton(f"Item {i}")
         btn.setProperty("class", f"item-{i}")
         btn.setObjectName(f"item-btn-{i}")
+        if active_every and i % active_every == 0:
+            btn.setProperty("active", True)
         anim_widgets.append(btn)
         all_widgets.append(btn)
 

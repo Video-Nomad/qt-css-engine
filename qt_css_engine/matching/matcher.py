@@ -2,7 +2,7 @@ import weakref
 from typing import TYPE_CHECKING
 
 from qt_css_engine.matching.cache import IdentityCache, WidgetCache
-from qt_css_engine.matching.compiler import CompiledSegment, WidgetIdentity, compile_segment
+from qt_css_engine.matching.compiler import CompiledSegment, WidgetIdentity, attr_matches, compile_segment
 from qt_css_engine.matching.index import StyleIndex
 from qt_css_engine.qt_compat.QtCore import QObject
 from qt_css_engine.qt_compat.QtWidgets import QWidget
@@ -21,6 +21,7 @@ class RuleMatcher:
         self._segments: dict[str, CompiledSegment] = {}
         self.identity_cache = IdentityCache()
         self.widget_cache = WidgetCache()
+        self.tracked_attrs: set[str] = set()
         self.build_quick_filters()
 
     # -- Index building -----------------------------------------------------------
@@ -29,6 +30,7 @@ class RuleMatcher:
         self._segments.clear()
         self.identity_cache.clear()
         self.widget_cache.clear()
+        self.tracked_attrs = set()
 
         freq: dict[str, int] = {}
         last_segments: list[CompiledSegment | None] = []
@@ -40,6 +42,9 @@ class RuleMatcher:
                     freq[cls] = freq.get(cls, 0) + 1
             else:
                 last_segments.append(None)
+            for seg in rule.segments:
+                for cond in self.segment(seg).attrs:
+                    self.tracked_attrs.add(cond.name)
 
         for index, rule in enumerate(self.rules):
             last_seg = last_segments[index]
@@ -65,20 +70,13 @@ class RuleMatcher:
                 self.index.flags.has_effect = True
             if has_radius:
                 self.index.flags.has_border_radius = True
-            if not rule.segments:
+            if last_seg is None:
                 continue
-            last = rule.segments[-1]
-            if last.startswith("#"):
-                self.index.quick.ids.add(last.split(".")[0][1:])
-            elif last.startswith("."):
-                for cls in last.split(".")[1:]:
-                    self.index.quick.classes.add(cls)
-            else:
-                parts = last.split(".")
-                if parts[0]:
-                    self.index.quick.tags.add(parts[0])
-                for cls in parts[1:]:
-                    self.index.quick.classes.add(cls)
+            if last_seg.obj_name is not None:
+                self.index.quick.ids.add(last_seg.obj_name)
+            if last_seg.tag is not None:
+                self.index.quick.tags.add(last_seg.tag)
+            self.index.quick.classes.update(last_seg.classes)
 
     def _index_rule(self, index: int, last: CompiledSegment, freq: dict[str, int] | None = None) -> None:
         if last.obj_name is not None:
@@ -190,14 +188,29 @@ class RuleMatcher:
 
     @staticmethod
     def identity_matches(ident: WidgetIdentity, seg: CompiledSegment) -> bool:
+        """Structural match only (id/tag/classes) — ignores `[attr]` conditions."""
         if seg.obj_name is not None and ident.obj_name != seg.obj_name:
             return False
         if seg.tag is not None and ident.tag != seg.tag:
             return False
         return not seg.classes or seg.classes <= ident.classes
 
+    @staticmethod
+    def segment_attrs_match(widget: QWidget, seg: CompiledSegment) -> bool:
+        """Check a widget's live dynamic properties against one segment's `[attr]` conditions."""
+        if not seg.attrs:
+            return True
+        try:
+            for cond in seg.attrs:
+                if not attr_matches(widget.property(cond.name), cond):
+                    return False
+        except RuntimeError:
+            return False
+        return True
+
     def widget_matches_segment(self, widget: QWidget, segment: str) -> bool:
-        return self.identity_matches(self.identity(widget), self.segment(segment))
+        seg = self.segment(segment)
+        return self.identity_matches(self.identity(widget), seg) and self.segment_attrs_match(widget, seg)
 
     def ancestor_identities(self, widget: QWidget) -> list[WidgetIdentity]:
         idents: list[WidgetIdentity] = []
@@ -207,6 +220,15 @@ class RuleMatcher:
                 idents.append(self.identity(ancestor))
             ancestor = ancestor.parent()
         return idents
+
+    def ancestor_widgets(self, widget: QWidget) -> list[QWidget]:
+        ancestors: list[QWidget] = []
+        ancestor: QObject | None = widget.parent()
+        while ancestor is not None:
+            if isinstance(ancestor, QWidget):
+                ancestors.append(ancestor)
+            ancestor = ancestor.parent()
+        return ancestors
 
     def match_ancestor_identities(self, idents: list[WidgetIdentity], segments: list[str]) -> bool:
         seg_idx = len(segments) - 2
@@ -221,15 +243,52 @@ class RuleMatcher:
                 seg = self.segment(segments[seg_idx])
         return False
 
-    def matches(self, widget: QWidget, rule: StyleRule) -> bool:
+    def match_ancestors(self, widget: QWidget, segments: list[str]) -> bool:
+        """Structural + `[attr]` ancestor match (descendant combinator, in order)."""
+        seg_idx = len(segments) - 2
+        if seg_idx < 0:
+            return True
+        seg = self.segment(segments[seg_idx])
+        ancestor: QObject | None = widget.parent()
+        while ancestor is not None:
+            if isinstance(ancestor, QWidget):
+                try:
+                    if self.identity_matches(self.identity(ancestor), seg) and self.segment_attrs_match(ancestor, seg):
+                        seg_idx -= 1
+                        if seg_idx < 0:
+                            return True
+                        seg = self.segment(segments[seg_idx])
+                except RuntimeError:
+                    return False
+            ancestor = ancestor.parent()
+        return False
+
+    def rule_attrs_match(self, widget: QWidget, rule: StyleRule) -> bool:
+        """True when every `[attr]` condition holds (widget + ancestors).
+
+        matching_rules() already verified the structural (id/tag/class/ancestry)
+        match; this re-walks the ancestor chain requiring both structural and
+        attr conditions so `[attr]` on any segment gates the rule.
+        """
         segments = rule.segments
         if not segments:
             return False
-        if not self.identity_matches(self.identity(widget), self.segment(segments[-1])):
+        if not self.segment_attrs_match(widget, self.segment(segments[-1])):
             return False
         if len(segments) == 1:
             return True
-        return self.match_ancestor_identities(self.ancestor_identities(widget), segments)
+        return self.match_ancestors(widget, segments)
+
+    def matches(self, widget: QWidget, rule: StyleRule) -> bool:
+        """Full match: structural + `[attr]` (pseudos stay cascade-gated, as before)."""
+        segments = rule.segments
+        if not segments:
+            return False
+        if not self.widget_matches_segment(widget, segments[-1]):
+            return False
+        if len(segments) == 1:
+            return True
+        return self.match_ancestors(widget, segments)
 
     def matching_rules(self, widget: QWidget) -> list[StyleRule]:
         wid = id(widget)

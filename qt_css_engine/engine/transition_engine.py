@@ -190,6 +190,16 @@ class TransitionEngine(QObject):
         """Handle class property change — snapshot size, unpolish/polish, and kick off animations."""
         class_change_handler.handle_class_change(self, widget)
 
+    def on_attr_change(self, widget: QWidget) -> None:
+        """Handle tracked `[attr=value]` dynamic-property change.
+
+        Same path as a class change: the structural match is unchanged, but the
+        cascade target (and Qt's native non-animated props) must be re-resolved.
+        Descendant caches are invalidated too, so ancestor-attr selectors refresh
+        on their next evaluation.
+        """
+        class_change_handler.handle_class_change(self, widget)
+
     def on_parent_change(self, widget: QWidget) -> None:
         """Handle reparenting; ancestor-dependent selectors may now match differently."""
         parent_change_handler.handle_parent_change(self, widget)

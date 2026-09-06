@@ -20,14 +20,18 @@ class CascadeEvaluator:
         trans_priority: dict[str, int] = {}
         pseudos = ctx.active_pseudos
         for rule in self._matcher.matching_rules(widget):
-            rule_in_target = not rule.pseudo_set or rule.pseudo_set <= pseudos
+            attrs_match = self._matcher.rule_attrs_match(widget, rule) if rule.has_attrs else True
+            rule_in_target = attrs_match and (not rule.pseudo_set or rule.pseudo_set <= pseudos)
             priority = sum(self._priority.get(p, 0) for p in rule.pseudo_set) if rule_in_target else -1
             for trans in rule.transitions:
                 state.animated_props.add(trans.prop)
                 if rule_in_target and priority >= trans_priority.get(trans.prop, -1):
                     state.transitions[trans.prop] = trans
                     trans_priority[trans.prop] = priority
-            if not rule.pseudo_set:
+            # Attr-conditional rules ([active=true]) are target-only like pseudo
+            # rules: the resting base must not shift with dynamic state, otherwise
+            # the animation start point would already equal the target.
+            if not rule.pseudo_set and not rule.has_attrs:
                 state.base_props.update(rule.properties)
             if rule_in_target:
                 state.target_props.update(rule.properties)

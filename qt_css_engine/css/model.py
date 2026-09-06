@@ -26,6 +26,7 @@ class StyleRule:
     transitions: list[TransitionSpec] = field(default_factory=list)
     segments: list[str] = field(default_factory=list)
     subcontrol: bool = False
+    has_attrs: bool = False
 
     has_effect_props: bool = field(init=False, default=False)
     has_cursor_prop: bool = field(init=False, default=False)
