@@ -1,19 +1,19 @@
 # pyright: reportPrivateUsage=false
 # pyright: reportUnknownMemberType=false
 """
-Coverage tests for size/layout interaction in engine.py.
+Coverage tests for size/layout interaction in the evaluation pipeline.
 
-Targets the trickiest parts of the size pipeline that the larger refactor must preserve:
+Targets the trickiest parts of the size pipeline:
 
-- _get_natural_size: ancestor-chain activation, write-depth marker, stylesheet strip/restore,
+- get_natural_size: ancestor-chain activation, write-depth marker, stylesheet strip/restore,
   no-parent-layout fallback, updatesEnabled toggle.
-- _resolve_target_raw: 'auto' + natural_hint, size-prop default, color default, empty fallthrough,
+- resolve_target_raw: 'auto' + natural_hint, size-prop default, color default, empty fallthrough,
   is_natural_target flag.
-- _resolve_current_raw: pre_polish_size snapshot, content_box_px conversion, css_anim_props
+- resolve_current_raw: pre_polish_size snapshot, content_box_px conversion, css_anim_props
   precedence, base_raw fallback.
-- _apply_prop_animation: current-size resolution, natural-target early-return paths,
+- apply_prop: current-size resolution, natural-target early-return paths,
   post clean_on_finish reentry.
-- _cleanup_orphans: snap_to_natural for size props, snap_to for non-size.
+- cleanup_orphans: snap_to_natural for size props, snap_to for non-size.
 - content_box_px / get_preferred_size_fallback: QFrame vs non-QFrame, zero clamp.
 - Class-change return-trip with size: natural_hint suppression, clean_on_finish path.
 """
@@ -22,9 +22,12 @@ import pytest
 from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
-from qt_css_engine.css_parser import extract_rules
-from qt_css_engine.handlers import GenericPropertyAnimation
-from qt_css_engine.layout_measure import content_box_px, get_preferred_size_fallback
+from qt_css_engine.animation.numeric import GenericPropertyAnimation
+from qt_css_engine.css.parser import extract_rules
+from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedRuleState
+from qt_css_engine.engine.evaluator import Evaluation
+from qt_css_engine.geometry.box_model import content_box_px
+from qt_css_engine.geometry.natural_size import get_preferred_size_fallback
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, Qt
 from qt_css_engine.qt_compat.QtWidgets import (
@@ -36,7 +39,7 @@ from qt_css_engine.qt_compat.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qt_css_engine.types import EvaluationCause, InternalWriteReason, ResolvedRuleState
+from qt_css_engine.state.suppress import InternalWriteReason
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,7 +56,7 @@ def destroy(widget: QWidget) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _get_natural_size — no constraint / no parent layout
+# get_natural_size — no constraint / no parent layout
 # ---------------------------------------------------------------------------
 
 
@@ -65,7 +68,7 @@ def test_natural_size_no_constraint_returns_preferred_fallback(_app: QApplicatio
 
     base_props = {"width": "100px"}
     expected = get_preferred_size_fallback(widget, base_props, "width")
-    result = engine._get_natural_size(widget, base_props, "width")
+    result = engine.evaluator.get_natural_size(widget, base_props, "width")
 
     assert result == expected
     destroy(widget)
@@ -77,10 +80,10 @@ def test_natural_size_no_parent_layout_falls_back_to_preferred(_app: QApplicatio
     widget = QWidget()  # orphan — no parent
     widget.setProperty("class", "x")
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["width"] = "100px"  # mark constrained
 
-    result = engine._get_natural_size(widget, {}, "width")
+    result = engine.evaluator.get_natural_size(widget, {}, "width")
     expected = get_preferred_size_fallback(widget, {}, "width")
     assert result == expected
     destroy(widget)
@@ -98,13 +101,10 @@ def test_natural_measurement_does_not_leave_temporary_size_style(_app: QApplicat
     parent.resize(400, 50)
     _app.processEvents()
 
-    ctx = engine._ctx(widget)
-    needs_update = engine._apply_prop_animation(
-        widget,
-        ctx,
+    ctx = engine.get_context(widget)
+    needs_update = engine.evaluator.apply_prop(
+        Evaluation(widget, ctx, ResolvedRuleState(), EvaluationCause.PSEUDO_STATE),
         "width",
-        state=ResolvedRuleState(),
-        cause=EvaluationCause.PSEUDO_STATE,
     )
 
     assert needs_update is False
@@ -121,7 +121,7 @@ def test_natural_size_internal_write_marker_set_during_measure(_app: QApplicatio
     widget = QWidget(parent)
     layout.addWidget(widget)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["width"] = "100px"
 
     captured_depth: list[int] = []
@@ -135,7 +135,7 @@ def test_natural_size_internal_write_marker_set_during_measure(_app: QApplicatio
         orig_set(css)
 
     widget.setStyleSheet = spy  # type: ignore[method-assign]
-    engine._get_natural_size(widget, {}, "width")
+    engine.evaluator.get_natural_size(widget, {}, "width")
 
     assert any(d >= 1 for d in captured_depth), "internal_write_depth must be incremented during measure"
     assert InternalWriteReason.MEASURE in captured_reason
@@ -155,11 +155,11 @@ def test_natural_size_restores_inline_stylesheet_after_measure(_app: QApplicatio
     parent.show()
     parent.resize(400, 50)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["width"] = "200px"
     widget.setStyleSheet(f"{type(widget).__name__}[_anim_scope] {{ width: 200px; }}")
 
-    engine._get_natural_size(widget, {}, "width")
+    engine.evaluator.get_natural_size(widget, {}, "width")
 
     assert "200px" in widget.styleSheet()
     destroy(parent)
@@ -173,7 +173,7 @@ def test_natural_size_disables_window_updates_during_measure(_app: QApplication)
     widget = QPushButton("hi", parent)
     layout.addWidget(widget)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["width"] = "100px"
 
     captured_during: list[bool] = []
@@ -187,7 +187,7 @@ def test_natural_size_disables_window_updates_during_measure(_app: QApplication)
 
     widget.setStyleSheet = spy  # type: ignore[method-assign]
     assert parent.updatesEnabled()
-    engine._get_natural_size(widget, {}, "width")
+    engine.evaluator.get_natural_size(widget, {}, "width")
 
     assert captured_during and captured_during[0] is False, "window updates must be off during measure"
     assert parent.updatesEnabled() is True, "updates must be re-enabled afterward"
@@ -202,10 +202,10 @@ def test_natural_size_height_axis_uses_height_constraint(_app: QApplication) -> 
     widget = QPushButton("hi", parent)
     layout.addWidget(widget)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["min-height"] = "50px"
 
-    result_w = engine._get_natural_size(widget, {}, "width")
+    result_w = engine.evaluator.get_natural_size(widget, {}, "width")
     assert result_w == get_preferred_size_fallback(widget, {}, "width")
     destroy(parent)
 
@@ -218,7 +218,7 @@ def test_natural_size_axis_props_handles_min_max_alongside_width(_app: QApplicat
     widget = QPushButton("hi", parent)
     layout.addWidget(widget)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["min-width"] = "200px"
     ctx.css_anim_props["max-width"] = "200px"
 
@@ -231,7 +231,7 @@ def test_natural_size_axis_props_handles_min_max_alongside_width(_app: QApplicat
         orig_set(css)
 
     widget.setStyleSheet = spy  # type: ignore[method-assign]
-    engine._get_natural_size(widget, {}, "width")
+    engine.evaluator.get_natural_size(widget, {}, "width")
 
     first = captured_first[0]
     assert "min-width" not in first and "max-width" not in first, (
@@ -241,7 +241,7 @@ def test_natural_size_axis_props_handles_min_max_alongside_width(_app: QApplicat
 
 
 # ---------------------------------------------------------------------------
-# _get_natural_size — ancestor chain activation order (the test_layouts root cause)
+# get_natural_size — ancestor chain activation order (the test_layouts root cause)
 # ---------------------------------------------------------------------------
 
 
@@ -275,12 +275,12 @@ def test_natural_size_outer_first_activation_collects_chain(_app: QApplication, 
     bar.show()
     qtbot.wait(50)
 
-    ctx = engine._ctx(target)
+    ctx = engine.get_context(target)
     ctx.css_anim_props["width"] = "200px"
     target.setStyleSheet("QPushButton[_anim_scope] { width: 200px; }")
     target.setProperty("_anim_scope", "test")
 
-    result = engine._get_natural_size(target, {}, "width")
+    result = engine.evaluator.get_natural_size(target, {}, "width")
     # Must be a small content-box value (~ button text width), nowhere near 200px.
     px = int(result.replace("px", ""))
     assert px < 100, f"natural width should be small (sizeHint-bounded), got {px}px"
@@ -288,7 +288,7 @@ def test_natural_size_outer_first_activation_collects_chain(_app: QApplication, 
 
 
 # ---------------------------------------------------------------------------
-# _resolve_target_raw
+# resolve_target_raw
 # ---------------------------------------------------------------------------
 
 
@@ -297,7 +297,7 @@ def test_resolve_target_auto_with_natural_hint_uses_hint(_app: QApplication) -> 
     engine = make_engine(".x { width: auto; }")
     widget = QWidget()
 
-    target_raw, is_natural = engine._resolve_target_raw(
+    target_raw, is_natural = engine.evaluator.resolve_target_raw(
         widget, base_props={}, target_props={"width": "auto"}, prop="width", natural_hint="42px"
     )
     assert target_raw == "42px"
@@ -306,11 +306,11 @@ def test_resolve_target_auto_with_natural_hint_uses_hint(_app: QApplication) -> 
 
 
 def test_resolve_target_auto_no_hint_calls_natural_size(_app: QApplication) -> None:
-    """'auto' without hint calls _get_natural_size (returns sizeHint fallback for orphan widget)."""
+    """'auto' without hint calls get_natural_size (returns sizeHint fallback for orphan widget)."""
     engine = make_engine(".x { width: auto; }")
     widget = QWidget()
 
-    target_raw, is_natural = engine._resolve_target_raw(
+    target_raw, is_natural = engine.evaluator.resolve_target_raw(
         widget, base_props={}, target_props={"width": "auto"}, prop="width"
     )
     assert target_raw.endswith("px")
@@ -323,7 +323,7 @@ def test_resolve_target_size_prop_no_value_is_natural(_app: QApplication) -> Non
     engine = make_engine(".x { color: red; }")
     widget = QWidget()
 
-    target_raw, is_natural = engine._resolve_target_raw(widget, base_props={}, target_props={}, prop="width")
+    target_raw, is_natural = engine.evaluator.resolve_target_raw(widget, base_props={}, target_props={}, prop="width")
     assert is_natural is True
     assert target_raw.endswith("px")
     destroy(widget)
@@ -334,7 +334,7 @@ def test_resolve_target_size_prop_explicit_value_not_natural(_app: QApplication)
     engine = make_engine(".x { width: 50px; }")
     widget = QWidget()
 
-    target_raw, is_natural = engine._resolve_target_raw(
+    target_raw, is_natural = engine.evaluator.resolve_target_raw(
         widget, base_props={"width": "50px"}, target_props={}, prop="width"
     )
     assert target_raw == "50px"
@@ -347,7 +347,7 @@ def test_resolve_target_color_prop_default_white(_app: QApplication) -> None:
     engine = make_engine(".x { background-color: red; }")
     widget = QWidget()
 
-    target_raw, is_natural = engine._resolve_target_raw(widget, base_props={}, target_props={}, prop="color")
+    target_raw, is_natural = engine.evaluator.resolve_target_raw(widget, base_props={}, target_props={}, prop="color")
     assert target_raw == "white"
     assert is_natural is False
     destroy(widget)
@@ -358,7 +358,7 @@ def test_resolve_target_other_color_default_transparent(_app: QApplication) -> N
     engine = make_engine(".x { color: red; }")
     widget = QWidget()
 
-    target_raw, _ = engine._resolve_target_raw(widget, base_props={}, target_props={}, prop="background-color")
+    target_raw, _ = engine.evaluator.resolve_target_raw(widget, base_props={}, target_props={}, prop="background-color")
     assert target_raw == "transparent"
     destroy(widget)
 
@@ -368,14 +368,16 @@ def test_resolve_target_non_animatable_no_value_returns_empty(_app: QApplication
     engine = make_engine(".x { color: red; }")
     widget = QWidget()
 
-    target_raw, is_natural = engine._resolve_target_raw(widget, base_props={}, target_props={}, prop="font-weight")
+    target_raw, is_natural = engine.evaluator.resolve_target_raw(
+        widget, base_props={}, target_props={}, prop="font-weight"
+    )
     assert target_raw == ""
     assert is_natural is False
     destroy(widget)
 
 
 # ---------------------------------------------------------------------------
-# _resolve_current_raw
+# resolve_current_raw
 # ---------------------------------------------------------------------------
 
 
@@ -383,10 +385,10 @@ def test_resolve_current_uses_existing_css_anim_props_value(_app: QApplication) 
     """If css_anim_props has a value for prop, that wins."""
     engine = make_engine(".x { width: 50px; }")
     widget = QWidget()
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["width"] = "77.500px"
 
-    result = engine._resolve_current_raw(widget, ctx, "width", base_props={}, base_raw="50px")
+    result = engine.evaluator.resolve_current_raw(widget, ctx, "width", base_props={}, base_raw="50px")
     assert result == "77.500px"
     destroy(widget)
 
@@ -396,12 +398,12 @@ def test_resolve_current_pre_polish_size_used_when_set(_app: QApplication) -> No
     engine = make_engine(".x { width: 50px; }")
     widget = QWidget()
     widget.resize(300, 100)  # actual width 300
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.pre_polish_size = (123, 50)
 
     # Pin border to zero so content_box_px doesn't subtract platform frame width.
     base_props = {"border-left-width": "0px", "border-right-width": "0px"}
-    result = engine._resolve_current_raw(widget, ctx, "width", base_props=base_props, base_raw="50px")
+    result = engine.evaluator.resolve_current_raw(widget, ctx, "width", base_props=base_props, base_raw="50px")
     assert result == "123px", f"pre_polish snapshot must beat widget.width(): got {result}"
     destroy(widget)
 
@@ -411,11 +413,11 @@ def test_resolve_current_widget_width_used_when_no_pre_polish(_app: QApplication
     engine = make_engine(".x { width: 50px; }")
     widget = QWidget()
     widget.resize(80, 30)
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.pre_polish_size = None
 
     base_props = {"border-left-width": "0px", "border-right-width": "0px"}
-    result = engine._resolve_current_raw(widget, ctx, "width", base_props=base_props, base_raw="50px")
+    result = engine.evaluator.resolve_current_raw(widget, ctx, "width", base_props=base_props, base_raw="50px")
     assert result == "80px"
     destroy(widget)
 
@@ -424,9 +426,9 @@ def test_resolve_current_non_size_falls_back_to_base_raw(_app: QApplication) -> 
     """Non-size prop with no css_anim_props entry → returns base_raw."""
     engine = make_engine(".x { color: red; }")
     widget = QWidget()
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
 
-    result = engine._resolve_current_raw(widget, ctx, "color", base_props={}, base_raw="#ff0000")
+    result = engine.evaluator.resolve_current_raw(widget, ctx, "color", base_props={}, base_raw="#ff0000")
     assert result == "#ff0000"
     destroy(widget)
 
@@ -435,17 +437,17 @@ def test_resolve_current_height_axis_uses_pre_polish_height(_app: QApplication) 
     """Height prop reads index 1 of pre_polish_size, not index 0."""
     engine = make_engine(".x { height: 50px; }")
     widget = QWidget()
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.pre_polish_size = (300, 77)
 
     base_props = {"border-top-width": "0px", "border-bottom-width": "0px"}
-    result = engine._resolve_current_raw(widget, ctx, "height", base_props=base_props, base_raw="50px")
+    result = engine.evaluator.resolve_current_raw(widget, ctx, "height", base_props=base_props, base_raw="50px")
     assert result == "77px"
     destroy(widget)
 
 
 # ---------------------------------------------------------------------------
-# _apply_prop_animation — current-value and natural-target paths
+# apply_prop — current-value and natural-target paths
 # ---------------------------------------------------------------------------
 
 
@@ -460,17 +462,19 @@ def test_apply_prop_does_not_leave_temporary_size_state_when_no_anim(_app: QAppl
     widget = QWidget()
     widget.setProperty("class", "x")
     widget.resize(50, 30)
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
 
     # Re-evaluate with no pseudo state and no class-change.
     # Target == base width == 50px. With no anim and no inline value, snap-skip path runs
     # without creating an inline value first.
-    engine._apply_prop_animation(
-        widget,
-        ctx,
+    engine.evaluator.apply_prop(
+        Evaluation(
+            widget,
+            ctx,
+            ResolvedRuleState(base_props={"width": "50px"}, target_props={"width": "50px"}),
+            EvaluationCause.PSEUDO_STATE,
+        ),
         "width",
-        state=ResolvedRuleState(base_props={"width": "50px"}, target_props={"width": "50px"}),
-        cause=EvaluationCause.PSEUDO_STATE,
     )
 
     assert "width" not in ctx.css_anim_props
@@ -485,14 +489,11 @@ def test_apply_prop_natural_target_no_anim_returns_false(_app: QApplication) -> 
     engine = make_engine(".x { width: auto; transition: width 200ms; }")
     widget = QWidget()
     widget.setProperty("class", "x")
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
 
-    needs_update = engine._apply_prop_animation(
-        widget,
-        ctx,
+    needs_update = engine.evaluator.apply_prop(
+        Evaluation(widget, ctx, ResolvedRuleState(), EvaluationCause.PSEUDO_STATE),
         "width",
-        state=ResolvedRuleState(),
-        cause=EvaluationCause.PSEUDO_STATE,
     )
     assert needs_update is False
     assert "width" not in ctx.css_anim_props
@@ -512,7 +513,7 @@ def test_apply_prop_post_clean_on_finish_skips_restart(_app: QApplication) -> No
     widget = QWidget()
     widget.setProperty("class", "x wide")
     widget.resize(200, 30)
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
 
     # Seed an anim obj as if class change ran already and clean_on_finish has fired.
     anim = GenericPropertyAnimation(widget, "width", 200.0, 200, QEasingCurve.Type.Linear, parent=engine, ctx=ctx)
@@ -521,19 +522,16 @@ def test_apply_prop_post_clean_on_finish_skips_restart(_app: QApplication) -> No
     # to simulate the post-clean_on_finish state.
     ctx.css_anim_props.clear()
 
-    needs_update = engine._apply_prop_animation(
-        widget,
-        ctx,
+    needs_update = engine.evaluator.apply_prop(
+        Evaluation(widget, ctx, ResolvedRuleState(), EvaluationCause.CLASS_ANIMATION_FINISH),
         "width",
-        state=ResolvedRuleState(),  # natural target — no width in base/target
-        cause=EvaluationCause.CLASS_ANIMATION_FINISH,
     )
     assert needs_update is False, "post-clean_on_finish must not restart animation toward sizeHint"
     destroy(widget)
 
 
 # ---------------------------------------------------------------------------
-# _cleanup_orphans — size vs non-size paths
+# cleanup_orphans — size vs non-size paths
 # ---------------------------------------------------------------------------
 
 
@@ -544,12 +542,12 @@ def test_cleanup_orphan_size_prop_uses_snap_to_natural(_app: QApplication) -> No
     """
     engine = make_engine(".x { transition: width 200ms; }")
     widget = QWidget()
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["width"] = "100.000px"
     anim = GenericPropertyAnimation(widget, "width", 100.0, 200, QEasingCurve.Type.Linear, parent=engine, ctx=ctx)
     ctx.active_animations["width"] = anim
 
-    needs_update = engine._cleanup_orphans(ctx, ResolvedRuleState())
+    needs_update = engine.evaluator.cleanup_orphans(ctx, ResolvedRuleState())
 
     assert "width" not in ctx.css_anim_props, "snap_to_natural must remove inline constraint"
     assert "width" not in ctx.active_animations, "orphan animation must be removed from registry"
@@ -561,12 +559,12 @@ def test_cleanup_orphan_size_prop_with_base_value_snaps_to_value(_app: QApplicat
     """When base_props has a value for a size prop, orphan snaps to that explicit value."""
     engine = make_engine(".x { width: 50px; }")
     widget = QWidget()
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["width"] = "100.000px"
     anim = GenericPropertyAnimation(widget, "width", 100.0, 200, QEasingCurve.Type.Linear, parent=engine, ctx=ctx)
     ctx.active_animations["width"] = anim
 
-    needs_update = engine._cleanup_orphans(ctx, ResolvedRuleState(base_props={"width": "50px"}))
+    needs_update = engine.evaluator.cleanup_orphans(ctx, ResolvedRuleState(base_props={"width": "50px"}))
 
     assert ctx.css_anim_props.get("width", "").startswith("50"), "orphan must snap to explicit base value, not natural"
     assert needs_update is True
@@ -577,10 +575,10 @@ def test_cleanup_stale_snapped_props_evicted(_app: QApplication) -> None:
     """css_anim_props entries with no backing animation and no rule coverage must be evicted."""
     engine = make_engine(".x { color: red; }")
     widget = QWidget()
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["min-width"] = "100.000px"  # stale snap, no animation, no rule
 
-    needs_update = engine._cleanup_orphans(ctx, ResolvedRuleState())
+    needs_update = engine.evaluator.cleanup_orphans(ctx, ResolvedRuleState())
     assert "min-width" not in ctx.css_anim_props
     assert needs_update is True
     destroy(widget)
@@ -712,11 +710,11 @@ def test_class_change_size_animation_uses_pre_polish_size_as_origin(_app: QAppli
     parent.show()
     qtbot.wait(50)
 
-    ctx = engine._ctx(btn)
+    ctx = engine.get_context(btn)
     ctx.css_anim_props["width"] = "200.000px"
 
     btn.setProperty("class", "btn")
-    engine._on_class_change(btn)
+    engine.on_class_change(btn)
 
     if "width" in ctx.active_animations:
         anim = ctx.active_animations["width"]
@@ -746,10 +744,10 @@ def test_class_change_to_natural_sets_clean_on_finish(_app: QApplication, qtbot:
     parent.show()
     qtbot.wait(50)
 
-    ctx = engine._ctx(btn)
+    ctx = engine.get_context(btn)
     ctx.css_anim_props["width"] = "200.000px"
     btn.setProperty("class", "btn")
-    engine._on_class_change(btn)
+    engine.on_class_change(btn)
 
     if "width" in ctx.active_animations:
         anim = ctx.active_animations["width"]
@@ -763,9 +761,9 @@ def test_clean_on_finish_removes_inline_constraint(_app: QApplication, qtbot: Qt
     widget = QWidget()
     ctx_props: dict[str, str] = {}
 
-    from qt_css_engine.types import WidgetContext
+    from qt_css_engine.state.widget_state import WidgetState
 
-    ctx = WidgetContext()
+    ctx = WidgetState()
     ctx.css_anim_props = ctx_props
 
     anim = GenericPropertyAnimation(widget, "width", 100.0, 30, QEasingCurve.Type.Linear, ctx=ctx)
@@ -798,9 +796,9 @@ def test_hover_size_animation_targets_explicit_value(_app: QApplication, qtbot: 
     parent.show()
     qtbot.wait(50)
 
-    ctx = engine._ctx(btn)
+    ctx = engine.get_context(btn)
     ctx.active_pseudos = {":hover"}
-    engine._evaluate_widget_state(btn, cause=EvaluationCause.PSEUDO_STATE)
+    engine.evaluate_widget_state(btn, cause=EvaluationCause.PSEUDO_STATE)
 
     assert "width" in ctx.active_animations
     anim = ctx.active_animations["width"]
@@ -825,16 +823,16 @@ def test_unhover_size_returns_to_natural_clean_on_finish(_app: QApplication, qtb
     parent.show()
     qtbot.wait(50)
 
-    ctx = engine._ctx(btn)
+    ctx = engine.get_context(btn)
     ctx.active_pseudos = {":hover"}
-    engine._evaluate_widget_state(btn, cause=EvaluationCause.PSEUDO_STATE)
+    engine.evaluate_widget_state(btn, cause=EvaluationCause.PSEUDO_STATE)
     anim = ctx.active_animations["width"]
     assert isinstance(anim, GenericPropertyAnimation)
     # Mid-flight to keep animation alive.
     anim.anim.setCurrentTime(50)
 
     ctx.active_pseudos = set()
-    engine._evaluate_widget_state(btn, cause=EvaluationCause.PSEUDO_STATE)
+    engine.evaluate_widget_state(btn, cause=EvaluationCause.PSEUDO_STATE)
 
     assert anim._clean_on_finish is True
     destroy(parent)
@@ -854,10 +852,10 @@ def test_class_change_clears_pre_polish_size_after_evaluation(_app: QApplication
     widget = QWidget()
     widget.setProperty("class", "x")
     widget.resize(60, 20)
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
 
     widget.setProperty("class", "x wide")
-    engine._on_class_change(widget)
+    engine.on_class_change(widget)
 
     assert ctx.pre_polish_size is None, "pre_polish_size must be cleared after class-change evaluation"
     destroy(widget)
@@ -874,16 +872,16 @@ def test_class_change_snapshots_size_before_polish(_app: QApplication) -> None:
     widget.resize(45, 25)
 
     captured: list[tuple[int, int] | None] = []
-    orig_resolve_current_raw = engine._resolve_current_raw
+    orig_resolve_current_raw = engine.evaluator.resolve_current_raw
 
     def spy_resolve(widget_: QWidget, ctx_: object, prop_: str, base_props_: dict[str, str], base_raw_: str) -> str:
         # Snapshot pre_polish_size when resolve_current is invoked during evaluation.
         captured.append(getattr(ctx_, "pre_polish_size", None))
         return orig_resolve_current_raw(widget_, ctx_, prop_, base_props_, base_raw_)  # type: ignore[arg-type]
 
-    engine._resolve_current_raw = spy_resolve  # type: ignore[method-assign]
+    engine.evaluator.resolve_current_raw = spy_resolve  # type: ignore[method-assign]
     widget.setProperty("class", "x wide")
-    engine._on_class_change(widget)
+    engine.on_class_change(widget)
 
     # At least one resolve call must have seen the pre-polish snapshot.
     assert any(snap == (45, 25) for snap in captured), f"expected (45, 25) in {captured}"

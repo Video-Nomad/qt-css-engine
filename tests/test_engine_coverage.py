@@ -1,7 +1,7 @@
 # pyright: reportPrivateUsage=false
 # pyright: reportUnknownMemberType=false
 """
-Coverage tests for engine.py behaviours not covered by test_anim.py or test_interactions.py.
+Coverage tests for engine behaviours not covered by test_anim.py or test_interactions.py.
 
 Focus areas:
 - startup delay (animations_enabled=False)
@@ -9,16 +9,16 @@ Focus areas:
 - Easing curve named-string resolution
 - Re-targeting a running animation mid-flight via engine
 - reload_rules cancels pending delays
-- _cleanup_orphans cancels pending delay for removed prop
+- cleanup_orphans cancels pending delay for removed prop
 - Pseudo specificity (:pressed > :hover)
 - transition: all return trip for engine-managed props
 - :focus animation end-to-end
 - margin/border-radius shorthand expansion
 - 3-level descendant selector
-- _on_polish guards (internal write depth, active animations)
+- on_polish guards (internal write depth, active animations)
 - Polish queue batches multiple widgets
-- _should_evaluate true with active animation even if no current rule match
-- _fire_delayed_prop no-op when prop absent from rules
+- should_evaluate true with active animation even if no current rule match
+- fire_delayed_prop no-op when prop absent from rules
 - double HoverEnter is a no-op (same pseudo set)
 - eventFilter ignores non-QWidget objects
 - eventFilter ignores unhandled widget event types
@@ -28,14 +28,16 @@ import pytest
 from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
-from qt_css_engine.css_parser import extract_rules
-from qt_css_engine.easing import resolve_easing_curve
-from qt_css_engine.handlers import ColorAnimation, GenericPropertyAnimation
+from qt_css_engine.animation.color import ColorAnimation
+from qt_css_engine.animation.factory import Animation
+from qt_css_engine.animation.numeric import GenericPropertyAnimation
+from qt_css_engine.css.parser import extract_rules
+from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedRuleState
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QSize, Qt, QTimer
 from qt_css_engine.qt_compat.QtGui import QColor
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QFrame, QPushButton, QVBoxLayout, QWidget
-from qt_css_engine.types import Animation, EvaluationCause, ResolvedRuleState
+from qt_css_engine.utils.easing import resolve_easing_curve
 
 # ---------------------------------------------------------------------------
 # Helpers (mirrors test_anim.py)
@@ -48,12 +50,12 @@ def make_engine(css: str) -> TransitionEngine:
 
 
 def hover_widget(engine: TransitionEngine, widget: QWidget) -> None:
-    engine._ctx(widget).active_pseudos = {":hover"}
-    engine._evaluate_widget_state(widget)
+    engine.get_context(widget).active_pseudos = {":hover"}
+    engine.evaluate_widget_state(widget)
 
 
 def _anims(engine: TransitionEngine, widget: QWidget) -> dict[str, Animation]:
-    ctx = engine._contexts.get(id(widget))
+    ctx = engine.store.contexts.get(id(widget))
     return ctx.active_animations if ctx is not None else {}
 
 
@@ -103,7 +105,7 @@ def test_startup_delay_suppresses_animations(_app: QApplication) -> None:
     hover_widget(engine, widget)
 
     assert not _has_anim(engine, widget, "background-color"), "animation must be suppressed during startup delay"
-    assert "background-color" in engine._ctx(widget).css_anim_props, "value must be snapped into css_anim_props"
+    assert "background-color" in engine.get_context(widget).css_anim_props, "value must be snapped into css_anim_props"
     destroy(widget)
 
 
@@ -138,9 +140,9 @@ def test_id_selector_populates_animated_ids() -> None:
         #myBtn { background-color: steelblue; }
         #myBtn:hover { background-color: royalblue; transition: background-color 300ms; }
     """)
-    assert "myBtn" in engine._matcher.animated_ids
-    assert "myBtn" not in engine._matcher.animated_classes
-    assert "myBtn" not in engine._matcher.animated_tags
+    assert "myBtn" in engine.matcher.index.quick.ids
+    assert "myBtn" not in engine.matcher.index.quick.classes
+    assert "myBtn" not in engine.matcher.index.quick.tags
 
 
 def test_id_selector_should_evaluate_matches_objectname(_app: QApplication) -> None:
@@ -149,14 +151,14 @@ def test_id_selector_should_evaluate_matches_objectname(_app: QApplication) -> N
     """)
     w_match = QWidget()
     w_match.setObjectName("myBtn")
-    assert engine._should_evaluate(w_match)
+    assert engine.should_evaluate(w_match)
 
     w_no_match = QWidget()
     w_no_match.setObjectName("other")
-    assert not engine._should_evaluate(w_no_match)
+    assert not engine.should_evaluate(w_no_match)
 
     w_no_name = QWidget()
-    assert not engine._should_evaluate(w_no_name)
+    assert not engine.should_evaluate(w_no_name)
 
 
 def test_id_selector_creates_animation(_app: QApplication) -> None:
@@ -264,8 +266,8 @@ def test_retarget_mid_flight_unhover_same_animation_object(_app: QApplication) -
     # Advance to mid-flight so the origin-reversal seek_ms < duration (not immediate completion).
     anim_before.anim.setCurrentTime(500)
 
-    engine._ctx(widget).active_pseudos = set()
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    engine.get_context(widget).active_pseudos = set()
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
 
     anim_after = _get_anim(engine, widget, "background-color")
     assert anim_after is anim_before, "must reuse same animation object, not create new"
@@ -286,8 +288,8 @@ def test_retarget_mid_flight_target_is_base_color(_app: QApplication) -> None:
     # Advance mid-flight before reversing
     _get_anim(engine, widget, "background-color").anim.setCurrentTime(500)
 
-    engine._ctx(widget).active_pseudos = set()
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    engine.get_context(widget).active_pseudos = set()
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
 
     anim = _get_anim(engine, widget, "background-color")
     assert isinstance(anim, ColorAnimation)
@@ -311,7 +313,7 @@ def test_reload_cancels_pending_delays(_app: QApplication) -> None:
     widget.setProperty("class", "box")
     hover_widget(engine, widget)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     assert "background-color" in ctx.pending_delays
 
     _, new_rules = extract_rules(".box { background-color: green; }")
@@ -323,12 +325,12 @@ def test_reload_cancels_pending_delays(_app: QApplication) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _cleanup_orphans cancels pending delay for removed prop
+# cleanup_orphans cancels pending delay for removed prop
 # ---------------------------------------------------------------------------
 
 
 def test_cleanup_orphans_cancels_delay_for_removed_prop(_app: QApplication) -> None:
-    """_cleanup_orphans must cancel the pending timer for props no longer in any rule."""
+    """cleanup_orphans must cancel the pending timer for props no longer in any rule."""
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:hover { background-color: royalblue; transition: background-color 200ms ease 500ms; }
@@ -337,11 +339,11 @@ def test_cleanup_orphans_cancels_delay_for_removed_prop(_app: QApplication) -> N
     widget.setProperty("class", "box")
     hover_widget(engine, widget)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     assert "background-color" in ctx.pending_delays
 
     # Simulate re-evaluation where background-color is no longer in any rule
-    engine._cleanup_orphans(ctx, ResolvedRuleState())
+    engine.evaluator.cleanup_orphans(ctx, ResolvedRuleState())
 
     assert "background-color" not in ctx.pending_delays, "delay must be cancelled for orphaned prop"
     destroy(widget)
@@ -362,8 +364,8 @@ def test_pseudo_specificity_pressed_beats_hover(_app: QApplication) -> None:
     widget = QWidget()
     widget.setProperty("class", "btn")
 
-    engine._ctx(widget).active_pseudos = {":hover", ":pressed"}
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    engine.get_context(widget).active_pseudos = {":hover", ":pressed"}
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
 
     anim = _get_anim(engine, widget, "background-color")
     assert isinstance(anim, ColorAnimation)
@@ -400,7 +402,7 @@ def test_transition_all_return_trip_engine_managed_props(_app: QApplication) -> 
     When transition:all is declared and css_anim_props has a prop from a prior animation,
     that prop must be included in the return-trip animation when the class reverts.
 
-    This exercises the code path in _collect_rule_state that expands transition:all to
+    This exercises the code path in collect_rule_state that expands transition:all to
     include engine-managed props already in css_anim_props.
     """
     engine = make_engine("""
@@ -411,12 +413,12 @@ def test_transition_all_return_trip_engine_managed_props(_app: QApplication) -> 
     widget.setProperty("class", "box")
 
     # Manually inject an engine-managed value: simulate a prior class animation that wrote blue.
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["background-color"] = "blue"
 
     # Evaluate in base state (.box only, no .active) — background-color is in css_anim_props
     # and must be picked up by the "transition: all" return-trip expansion.
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.CLASS_CHANGE)
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.CLASS_CHANGE)
 
     assert _has_anim(engine, widget, "background-color"), (
         "background-color must animate back to red via transition:all return-trip"
@@ -434,11 +436,11 @@ def test_class_change_initial_tick_flushes_inline_style_immediately(_app: QAppli
     """)
     widget = TrackedWidget()
     widget.setProperty("class", "box on")
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["background-color"] = "red"
 
     count_before = widget.setStyleSheet_count
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.CLASS_CHANGE)
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.CLASS_CHANGE)
 
     assert widget.setStyleSheet_count > count_before
     assert not ctx.style_flush_pending
@@ -454,11 +456,11 @@ def test_class_change_numeric_initial_tick_flushes_start_size_immediately(_app: 
     widget = TrackedWidget()
     widget.setProperty("class", "box")
     widget.resize(22, 22)
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
 
     widget.setProperty("class", "box focused")
     count_before = widget.setStyleSheet_count
-    engine._on_class_change(widget)
+    engine.on_class_change(widget)
 
     assert widget.setStyleSheet_count > count_before
     assert not ctx.style_flush_pending
@@ -489,13 +491,13 @@ def test_class_change_ticks_after_the_first_frame_are_batched(_app: QApplication
     widget = TrackedWidget()
     widget.setProperty("class", "box")
     widget.resize(60, 60)
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     # Rendered state before the class change, as a real polished widget would have.
     ctx.css_anim_props["background-color"] = "red"
     ctx.css_anim_props["color"] = "white"
 
     widget.setProperty("class", "box on")
-    engine._on_class_change(widget)
+    engine.on_class_change(widget)
     assert len(ctx.class_anim_props) == 2, "both properties should animate from the class change"
 
     # Drive one frame of every running animation and count the resulting writes.
@@ -505,7 +507,7 @@ def test_class_change_ticks_after_the_first_frame_are_batched(_app: QApplication
     assert widget.setStyleSheet_count == count_before, "ticks must not write synchronously"
     assert ctx.style_flush_pending, "a batched flush should be queued instead"
 
-    engine._flush_scheduled_widget_style(widget, id(widget))
+    engine.writer.flush_scheduled(widget, id(widget))
     assert widget.setStyleSheet_count == count_before + 1, "the batch must collapse to one write"
     assert not ctx.style_flush_pending
     destroy(widget)
@@ -515,18 +517,18 @@ def test_style_flush_skips_equal_style_but_restores_external_overwrite(_app: QAp
     engine = make_engine(".box { color: red; transition: color 100ms; }")
     widget = TrackedWidget()
     widget.setProperty("class", "box")
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.css_anim_props["color"] = "red"
 
-    engine._flush_widget_style_now(widget, ctx)
+    engine.writer.flush_now(widget, ctx)
     first_style = widget.styleSheet()
     assert widget.setStyleSheet_count == 1
 
-    engine._flush_widget_style_now(widget, ctx)
+    engine.writer.flush_now(widget, ctx)
     assert widget.setStyleSheet_count == 1
 
     widget.setStyleSheet("color: blue;")
-    engine._flush_widget_style_now(widget, ctx)
+    engine.writer.flush_now(widget, ctx)
     assert widget.setStyleSheet_count == 3
     assert widget.styleSheet() == first_style
     destroy(widget)
@@ -550,8 +552,8 @@ def test_focus_animation_created_on_focus_in(_app: QApplication) -> None:
     widget = QWidget()
     widget.setProperty("class", "input")
 
-    engine._ctx(widget).active_pseudos = {":focus"}
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    engine.get_context(widget).active_pseudos = {":focus"}
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
 
     assert _has_anim(engine, widget, "background-color")
     anim = _get_anim(engine, widget, "background-color")
@@ -569,16 +571,16 @@ def test_focus_animation_reversed_on_focus_out(_app: QApplication) -> None:
     widget = QWidget()
     widget.setProperty("class", "input")
 
-    engine._ctx(widget).active_pseudos = {":focus"}
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    engine.get_context(widget).active_pseudos = {":focus"}
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
     assert _has_anim(engine, widget, "background-color")
 
     # Advance mid-flight so the reversal keeps the animation running.
     _get_anim(engine, widget, "background-color").anim.setCurrentTime(150)
 
     # Focus out — should re-target toward base (white)
-    engine._ctx(widget).active_pseudos = set()
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
+    engine.get_context(widget).active_pseudos = set()
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
 
     anim = _get_anim(engine, widget, "background-color")
     assert isinstance(anim, ColorAnimation)
@@ -731,7 +733,7 @@ def test_border_radius_target_clamp_uses_target_min_max_size(_app: QApplication,
         assert anim.anim.endValue() == pytest.approx(22.0), f"{corner} should clamp against the 40px target size"
 
     qtbot.wait(350)
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     for corner in (
         "border-top-left-radius",
         "border-top-right-radius",
@@ -761,7 +763,7 @@ def test_batched_flush_clamps_overshooting_radius_against_pending_size(_app: QAp
     widget.resize(50, 50)
     hover_widget(engine, widget)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     radius_anim = _get_anim(engine, widget, "border-top-left-radius")
     width_anim = _get_anim(engine, widget, "width")
     height_anim = _get_anim(engine, widget, "height")
@@ -811,7 +813,7 @@ def test_class_change_noop_radius_rewrites_stale_larger_clamp(_app: QApplication
     widget = QPushButton()
     widget.setProperty("class", "ws-btn active_populated focused_populated")
     widget.resize(50, 30)
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     for corner in (
         "border-top-left-radius",
         "border-top-right-radius",
@@ -821,7 +823,7 @@ def test_class_change_noop_radius_rewrites_stale_larger_clamp(_app: QApplication
         ctx.css_anim_props[corner] = "22.000px"
 
     widget.setProperty("class", "ws-btn active_populated")
-    engine._on_class_change(widget)
+    engine.on_class_change(widget)
 
     for corner in (
         "border-top-left-radius",
@@ -886,7 +888,7 @@ def test_border_radius_zero_duration_snap_clamped_to_half_min_side(_app: QApplic
     widget.resize(20, 10)
     hover_widget(engine, widget)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     assert not _has_anim(engine, widget, "border-top-left-radius")
     for corner in (
         "border-top-left-radius",
@@ -906,9 +908,9 @@ def test_static_border_radius_oversize_clamped_without_animation(_app: QApplicat
     widget.setProperty("class", "box")
     widget.resize(20, 10)
 
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     assert not ctx.active_animations
     for corner in (
         "border-top-left-radius",
@@ -928,9 +930,9 @@ def test_static_border_radius_safe_value_stays_native_qss(_app: QApplication) ->
     widget.setProperty("class", "box")
     widget.resize(20, 10)
 
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     assert not ctx.active_animations
     assert ctx.css_anim_props == {}
     destroy(widget)
@@ -944,8 +946,8 @@ def test_reload_adds_static_border_radius_clamp_without_prior_engine_state(_app:
     widget.setProperty("class", "box")
     widget.resize(20, 10)
 
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
-    assert id(widget) not in engine._contexts
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    assert id(widget) not in engine.store.contexts
 
     _, new_rules = extract_rules("""
         .box { background-color: red; border-radius: 999px; }
@@ -953,7 +955,7 @@ def test_reload_adds_static_border_radius_clamp_without_prior_engine_state(_app:
     engine.reload_rules(new_rules)
     qtbot.wait(20)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     assert not ctx.active_animations
     for corner in (
         "border-top-left-radius",
@@ -973,8 +975,8 @@ def test_reload_removes_static_border_radius_clamp_when_value_becomes_safe(_app:
     widget.setProperty("class", "box")
     widget.resize(20, 10)
 
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
-    assert engine._ctx(widget).css_anim_props
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    assert engine.get_context(widget).css_anim_props
 
     _, new_rules = extract_rules("""
         .box { border-radius: 4px; }
@@ -982,7 +984,7 @@ def test_reload_removes_static_border_radius_clamp_when_value_becomes_safe(_app:
     engine.reload_rules(new_rules)
     qtbot.wait(20)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     assert not ctx.active_animations
     assert ctx.css_anim_props == {}
     destroy(widget)
@@ -1003,7 +1005,7 @@ def test_reload_static_border_radius_rechecks_after_geometry_settles(_app: QAppl
     QTimer.singleShot(0, lambda: widget.resize(20, 10))
     qtbot.wait(20)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     assert not ctx.active_animations
     for corner in (
         "border-top-left-radius",
@@ -1053,7 +1055,7 @@ def test_reload_transition_all_border_radius_clamps_without_removing_transition(
     engine.reload_rules(new_rules)
     qtbot.wait(20)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     for corner in (
         "border-top-left-radius",
         "border-top-right-radius",
@@ -1073,16 +1075,16 @@ def test_border_radius_initial_polish_uses_size_hint_when_geometry_unset(_app: Q
     widget.setProperty("class", "box")
     widget.resize(0, 0)
 
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     for corner in (
         "border-top-left-radius",
         "border-top-right-radius",
         "border-bottom-right-radius",
         "border-bottom-left-radius",
     ):
-        assert ctx.css_anim_props.get(corner) == "4px", f"{corner} should preserve the base radius on first polish"
+        assert ctx.css_anim_props.get(corner) == "4.000px", f"{corner} should preserve the base radius on first polish"
     destroy(widget)
 
 
@@ -1095,9 +1097,9 @@ def test_border_radius_class_selected_on_initial_polish_not_skipped(_app: QAppli
     widget.setProperty("class", "box focused")
     widget.resize(0, 0)
 
-    engine._evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     for corner in (
         "border-top-left-radius",
         "border-top-right-radius",
@@ -1155,29 +1157,29 @@ def test_three_level_descendant_selector_no_match_wrong_middle(_app: QApplicatio
 
 
 # ---------------------------------------------------------------------------
-# _on_polish guards
+# on_polish guards
 # ---------------------------------------------------------------------------
 
 
 def test_on_polish_skipped_during_internal_write(_app: QApplication) -> None:
-    """_on_polish must not queue the widget when internal_write_depth > 0."""
+    """on_polish must not queue the widget when internal_write_depth > 0."""
     engine = make_engine("""
         .box { background-color: red; transition: background-color 300ms; }
     """)
     widget = QWidget()
     widget.setProperty("class", "box")
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     ctx.internal_write_depth = 1  # engine is mid-write
 
-    engine._polish_queue.clear()
-    engine._on_polish(widget)
+    engine.polish.queue.clear()
+    engine.on_polish(widget)
 
-    assert widget not in engine._polish_queue
+    assert widget not in engine.polish.queue
 
 
 def test_on_polish_skipped_when_active_animation_running(_app: QApplication) -> None:
-    """_on_polish must not re-queue a widget that already has running animations."""
+    """on_polish must not re-queue a widget that already has running animations."""
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:hover { background-color: royalblue; transition: background-color 1000ms; }
@@ -1188,10 +1190,10 @@ def test_on_polish_skipped_when_active_animation_running(_app: QApplication) -> 
 
     assert _has_anim(engine, widget, "background-color")
 
-    engine._polish_queue.clear()
-    engine._on_polish(widget)
+    engine.polish.queue.clear()
+    engine.on_polish(widget)
 
-    assert widget not in engine._polish_queue
+    assert widget not in engine.polish.queue
     destroy(widget)
 
 
@@ -1201,7 +1203,7 @@ def test_on_polish_skipped_when_active_animation_running(_app: QApplication) -> 
 
 
 def test_polish_queue_batches_multiple_widgets(_app: QApplication) -> None:
-    """Multiple _on_polish calls before the event loop flushes must all land in the queue."""
+    """Multiple on_polish calls before the event loop flushes must all land in the queue."""
     engine = make_engine("""
         .box { background-color: red; }
         .box:hover { background-color: blue; transition: background-color 300ms; }
@@ -1211,27 +1213,27 @@ def test_polish_queue_batches_multiple_widgets(_app: QApplication) -> None:
     w2 = QWidget()
     w2.setProperty("class", "box")
 
-    engine._polish_queue.clear()
-    engine._polish_pending = False
+    engine.polish.queue.clear()
+    engine.polish.pending = False
 
-    engine._on_polish(w1)
-    engine._on_polish(w2)
+    engine.on_polish(w1)
+    engine.on_polish(w2)
 
-    assert engine._polish_pending
-    assert w1 in engine._polish_queue
-    assert w2 in engine._polish_queue
+    assert engine.polish.pending
+    assert w1 in engine.polish.queue
+    assert w2 in engine.polish.queue
 
     destroy(w1)
     destroy(w2)
 
 
 # ---------------------------------------------------------------------------
-# _should_evaluate: active animation keeps widget evaluatable even if no rule matches
+# should_evaluate: active animation keeps widget evaluatable even if no rule matches
 # ---------------------------------------------------------------------------
 
 
 def test_should_evaluate_true_with_active_animation_no_rule_match(_app: QApplication) -> None:
-    """A widget with active animations must pass _should_evaluate regardless of quick-filter state."""
+    """A widget with active animations must pass should_evaluate regardless of quick-filter state."""
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:hover { background-color: royalblue; transition: background-color 1000ms; }
@@ -1243,21 +1245,21 @@ def test_should_evaluate_true_with_active_animation_no_rule_match(_app: QApplica
     assert _has_anim(engine, widget, "background-color")
 
     # Clear all quick-filter sets to simulate "no rule ever matches anything"
-    engine._matcher.animated_classes.clear()
-    engine._matcher.animated_tags.clear()
-    engine._matcher.animated_ids.clear()
+    engine.matcher.index.quick.classes.clear()
+    engine.matcher.index.quick.tags.clear()
+    engine.matcher.index.quick.ids.clear()
 
-    assert engine._should_evaluate(widget), "active animation must override quick-filter result"
+    assert engine.should_evaluate(widget), "active animation must override quick-filter result"
     destroy(widget)
 
 
 # ---------------------------------------------------------------------------
-# _fire_delayed_prop: no-op when prop absent from rules
+# fire_delayed_prop: no-op when prop absent from rules
 # ---------------------------------------------------------------------------
 
 
 def test_fire_delayed_prop_no_op_for_prop_not_in_rules(_app: QApplication) -> None:
-    """_fire_delayed_prop for a prop not in any rule must not modify css_anim_props."""
+    """fire_delayed_prop for a prop not in any rule must not modify css_anim_props."""
     engine = make_engine("""
         .box { background-color: steelblue; }
         .box:hover { background-color: royalblue; transition: background-color 200ms ease 500ms; }
@@ -1267,7 +1269,7 @@ def test_fire_delayed_prop_no_op_for_prop_not_in_rules(_app: QApplication) -> No
     hover_widget(engine, widget)
 
     count_before = widget.setStyleSheet_count
-    engine._fire_delayed_prop(widget, "font-size")  # not in any rule
+    engine.evaluator.fire_delayed_prop(widget, "font-size")  # not in any rule
 
     assert widget.setStyleSheet_count == count_before
     destroy(widget)
@@ -1291,7 +1293,7 @@ def test_double_hover_enter_no_re_evaluation(_app: QApplication) -> None:
     count_after_first = widget.setStyleSheet_count
 
     # :hover already in active_pseudos; second HoverEnter must see updated == active_pseudos
-    engine._ctx(widget).active_pseudos = {":hover"}
+    engine.get_context(widget).active_pseudos = {":hover"}
     engine.eventFilter(widget, QEvent(QEvent.Type.HoverEnter))
 
     assert widget.setStyleSheet_count == count_after_first, "re-evaluation must not occur on duplicate HoverEnter"
@@ -1320,5 +1322,5 @@ def test_event_filter_ignores_unhandled_widget_event_type(_app: QApplication) ->
     result = engine.eventFilter(widget, QEvent(QEvent.Type.Paint))
 
     assert result is False
-    assert id(widget) not in engine._contexts
+    assert id(widget) not in engine.store.contexts
     destroy(widget)

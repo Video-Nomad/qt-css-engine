@@ -2,8 +2,9 @@
 from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
-from qt_css_engine.css_parser import extract_rules
-from qt_css_engine.handlers import BoxShadowHandle, GenericPropertyAnimation
+from qt_css_engine.animation.numeric import GenericPropertyAnimation
+from qt_css_engine.animation.shadow import BoxShadowHandle
+from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QEvent, QPointF, Qt
 from qt_css_engine.qt_compat.QtGui import QMouseEvent
 from qt_css_engine.qt_compat.QtWidgets import QWidget
@@ -84,15 +85,15 @@ def test_right_click_pressed_only_on_target(qtbot: QtBot):
     engine.eventFilter(child, event)
     engine.eventFilter(parent, event)
 
-    assert ":pressed" in engine._ctx(child).active_pseudos
-    parent_ctx = engine._contexts.get(id(parent))
+    assert ":pressed" in engine.get_context(child).active_pseudos
+    parent_ctx = engine.store.contexts.get(id(parent))
     assert parent_ctx is None or ":pressed" not in parent_ctx.active_pseudos
 
 
 def test_left_click_only_ignores_right_click(qtbot: QtBot):
     """With _left_click_only=True, right/middle clicks are fully filtered — no :pressed anywhere."""
     engine = make_engine(_PRESSED_CSS)
-    engine._left_click_only = True
+    engine.left_click_only = True
 
     widget = QWidget()
     qtbot.addWidget(widget)
@@ -100,7 +101,7 @@ def test_left_click_only_ignores_right_click(qtbot: QtBot):
 
     engine.eventFilter(widget, _right_press())
 
-    ctx = engine._contexts.get(id(widget))
+    ctx = engine.store.contexts.get(id(widget))
     assert ctx is None or ":pressed" not in ctx.active_pseudos
 
 
@@ -122,11 +123,11 @@ def test_window_activate_sets_active_pseudo(qtbot: QtBot):
     qtbot.addWidget(parent)
     child = QWidget(parent)
     child.setProperty("class", "target")
-    engine._seed_active_pseudo(child)  # normally triggered at Polish time
+    engine.seed_active_pseudo(child)  # normally triggered at Polish time
 
     engine.eventFilter(parent, QEvent(QEvent.Type.WindowActivate))
 
-    assert ":active" in engine._ctx(child).active_pseudos
+    assert ":active" in engine.get_context(child).active_pseudos
 
 
 def test_window_deactivate_clears_active_pseudo(qtbot: QtBot):
@@ -137,11 +138,11 @@ def test_window_deactivate_clears_active_pseudo(qtbot: QtBot):
     qtbot.addWidget(parent)
     child = QWidget(parent)
     child.setProperty("class", "target")
-    engine._ctx(child).active_pseudos.add(":active")
+    engine.get_context(child).active_pseudos.add(":active")
 
     engine.eventFilter(parent, QEvent(QEvent.Type.WindowDeactivate))
 
-    ctx = engine._contexts.get(id(child))
+    ctx = engine.store.contexts.get(id(child))
     assert ctx is None or ":active" not in ctx.active_pseudos
 
 
@@ -153,11 +154,11 @@ def test_leave_window_preserves_active_pseudo(qtbot: QtBot):
     qtbot.addWidget(parent)
     child = QWidget(parent)
     child.setProperty("class", "target")
-    engine._ctx(child).active_pseudos.add(":active")
+    engine.get_context(child).active_pseudos.add(":active")
 
     engine.eventFilter(parent, QEvent(QEvent.Type.Leave))
 
-    assert ":active" in engine._ctx(child).active_pseudos
+    assert ":active" in engine.get_context(child).active_pseudos
 
 
 def test_window_activate_ignores_non_matching_widgets(qtbot: QtBot):
@@ -171,7 +172,7 @@ def test_window_activate_ignores_non_matching_widgets(qtbot: QtBot):
 
     engine.eventFilter(parent, QEvent(QEvent.Type.WindowActivate))
 
-    ctx = engine._contexts.get(id(child))
+    ctx = engine.store.contexts.get(id(child))
     assert ctx is None or ":active" not in ctx.active_pseudos
 
 
@@ -182,12 +183,12 @@ def test_active_pseudo_triggers_transition(qtbot: QtBot):
     widget = QWidget()
     qtbot.addWidget(widget)
     widget.setProperty("class", "target")
-    engine._evaluate_widget_state(widget)
+    engine.evaluate_widget_state(widget)
 
-    engine._ctx(widget).active_pseudos.add(":active")
-    engine._evaluate_widget_state(widget)
+    engine.get_context(widget).active_pseudos.add(":active")
+    engine.evaluate_widget_state(widget)
 
-    assert "background-color" in engine._ctx(widget).active_animations
+    assert "background-color" in engine.get_context(widget).active_animations
 
 
 def test_border_radius_reclamps_after_resize_event(qtbot: QtBot):
@@ -205,7 +206,7 @@ def test_border_radius_reclamps_after_resize_event(qtbot: QtBot):
     engine.eventFilter(widget, QEvent(QEvent.Type.Polish))
     qtbot.wait(20)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     radius_props = (
         "border-top-left-radius",
         "border-top-right-radius",
@@ -242,12 +243,12 @@ def test_resize_event_does_not_snap_running_size_transition(qtbot: QtBot):
     qtbot.addWidget(widget)
     widget.setProperty("class", "box")
     widget.resize(20, 20)
-    engine._evaluate_widget_state(widget)
+    engine.evaluate_widget_state(widget)
 
     widget.setProperty("class", "box wide")
-    engine._on_class_change(widget)
+    engine.on_class_change(widget)
 
-    ctx = engine._ctx(widget)
+    ctx = engine.get_context(widget)
     anim = ctx.active_animations.get("width")
     assert isinstance(anim, GenericPropertyAnimation)
     assert anim.anim.state() == anim.anim.State.Running
@@ -309,7 +310,7 @@ def test_hidden_child_show_reclamps_parent_radius_with_effect_handles(qtbot: QtB
         parent.show()
         qtbot.wait(20)
 
-        frame_ctx = engine._ctx(frame)
+        frame_ctx = engine.get_context(frame)
         assert {"box-shadow", "opacity"} <= set(frame_ctx.active_animations)
         assert not any(prop.startswith("border-") and prop.endswith("-radius") for prop in frame_ctx.css_anim_props)
 

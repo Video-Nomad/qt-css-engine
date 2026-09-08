@@ -13,8 +13,6 @@ This version mirrors the relevant parts of the real Bar setup:
 - `QGridLayout` with left/center/right container frames
 """
 
-# pyright: reportPrivateUsage=false
-
 import logging
 import os
 import sys
@@ -128,9 +126,9 @@ class ReproBar(QWidget):
         self._target_screen = bar_screen
         self._padding = {"left": 8, "right": 8, "top": 6, "bottom": 6}
         self._dimensions = {"height": 60}
-        self._bar_frame = QFrame(self)
-        self._bar_frame.setProperty("class", "bar")
-        self._bar_frame.installEventFilter(self)
+        self.bar_frame = QFrame(self)
+        self.bar_frame.setProperty("class", "bar")
+        self.bar_frame.installEventFilter(self)
         self.setWindowTitle("Repro: QGridLayout bar, class-toggle width")
         self.position_bar(init=True)
 
@@ -148,7 +146,7 @@ class ReproBar(QWidget):
         bar_height = self._dimensions["height"]
         bar_x, bar_y = self.bar_pos()
         self.setGeometry(bar_x, bar_y, bar_width, bar_height)
-        self._bar_frame.setGeometry(0, 0, bar_width, bar_height)
+        self.bar_frame.setGeometry(0, 0, bar_width, bar_height)
         print(
             f"[bar] position_bar init={init} screen={screen_width}x{screen_height} "
             f"bar=({bar_x},{bar_y},{bar_width},{bar_height})"
@@ -162,7 +160,7 @@ class ReproBar(QWidget):
 def print_ws_state(engine: TransitionEngine, ws_buttons: list[QPushButton], header: str) -> None:
     print(f"\n=== {header} ===")
     for btn in ws_buttons:
-        ctx = engine._contexts.get(id(btn))
+        ctx = engine.store.contexts.get(id(btn))
         anim = ctx.active_animations.get("width") if ctx is not None else None
         state = "none"
         end_val = None
@@ -182,7 +180,7 @@ def print_ws_state(engine: TransitionEngine, ws_buttons: list[QPushButton], head
 
 
 def attach_width_debug(engine: TransitionEngine, btn: QPushButton) -> None:
-    ctx = engine._contexts.get(id(btn))
+    ctx = engine.store.contexts.get(id(btn))
     if ctx is None:
         return
     anim = ctx.active_animations.get("width")
@@ -199,7 +197,7 @@ def attach_width_debug(engine: TransitionEngine, btn: QPushButton) -> None:
         )
 
     def on_finished(button: QPushButton = btn) -> None:
-        ctx_now = engine._contexts.get(id(button))
+        ctx_now = engine.store.contexts.get(id(button))
         css_props = {} if ctx_now is None else {k: v for k, v in ctx_now.css_anim_props.items() if "width" in k}
         print(
             f"[done] btn={button.text()} class={class_str(button)!r} width={button.width()} "
@@ -223,7 +221,7 @@ def main() -> None:
     assert (ps := app.primaryScreen()) is not None
     bar = ReproBar(ps)
     bar.setProperty("class", "bar")
-    bar_frame = bar._bar_frame
+    bar_frame = bar.bar_frame
 
     # QGridLayout with 3 columns matching parent app
     grid = QGridLayout()
@@ -296,11 +294,11 @@ def main() -> None:
         old_btn = ws_buttons[old_idx]
         new_btn = ws_buttons[new_idx]
 
-        assert (layout := bar._bar_frame.layout()) is not None
+        assert (layout := bar.bar_frame.layout()) is not None
         print_ws_state(engine, ws_buttons, "before switch")
         print(
-            f"[bar] before switch outer={bar.geometry()} frame={bar._bar_frame.geometry()} "
-            f"layout_hint={layout.sizeHint().width() if bar._bar_frame.layout() else 'n/a'}"
+            f"[bar] before switch outer={bar.geometry()} frame={bar.bar_frame.geometry()} "
+            f"layout_hint={layout.sizeHint().width() if bar.bar_frame.layout() else 'n/a'}"
         )
         print(f"\n>>> switching focused workspace {old_btn.text()} -> {new_btn.text()}")
         old_btn.setProperty("class", "ws-btn active_populated")

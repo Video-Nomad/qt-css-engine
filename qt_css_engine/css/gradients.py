@@ -163,6 +163,15 @@ _RADIAL_DESCRIPTOR_KEYWORDS: frozenset[str] = frozenset(
 
 _POS_VALUE_RE = re.compile(r"^(-?[\d.]+)(%?)$")
 
+_WORD_RE = re.compile(r"[a-z-]+")
+_AT_POS_RE = re.compile(r"\bat\s+([\d.]+%?)\s+([\d.]+%?)", re.IGNORECASE)
+_RADIAL_SHAPE_RE = re.compile(
+    r"\b(circle|ellipse|closest-side|farthest-side|closest-corner|farthest-corner)\b",
+    re.IGNORECASE,
+)
+_SIZE_NUM_RE = re.compile(r"([\d.]+)(%?)")
+_FROM_ANGLE_RE = re.compile(r"\bfrom\s+(-?[\d.]+)deg\b", re.IGNORECASE)
+
 
 def _parse_pos_value(s: str) -> float:
     """Parse a CSS position token (``50%`` or ``0.5``) to a [0, 1] float."""
@@ -192,26 +201,21 @@ def _translate_radial_inner(inner: str) -> str | None:
     cx, cy, radius = 0.5, 0.5, 0.5
     stop_start = 0
 
-    first_words = set(re.findall(r"[a-z-]+", args[0].lower()))
+    first_words = set(_WORD_RE.findall(args[0].lower()))
     if first_words & _RADIAL_DESCRIPTOR_KEYWORDS:
         stop_start = 1
         descriptor = args[0]
 
         # Extract 'at <cx> <cy>'
-        at_m = re.search(r"\bat\s+([\d.]+%?)\s+([\d.]+%?)", descriptor, re.IGNORECASE)
+        at_m = _AT_POS_RE.search(descriptor)
         if at_m:
             cx = _parse_pos_value(at_m.group(1))
             cy = _parse_pos_value(at_m.group(2))
             descriptor = descriptor[: at_m.start()]
 
         # Extract explicit radius: strip shape/size keywords, look for a number
-        cleaned = re.sub(
-            r"\b(circle|ellipse|closest-side|farthest-side|closest-corner|farthest-corner)\b",
-            "",
-            descriptor,
-            flags=re.IGNORECASE,
-        ).strip()
-        size_m = re.search(r"([\d.]+)(%?)", cleaned)
+        cleaned = _RADIAL_SHAPE_RE.sub("", descriptor).strip()
+        size_m = _SIZE_NUM_RE.search(cleaned)
         if size_m:
             val = float(size_m.group(1))
             radius = val / 100.0 if size_m.group(2) == "%" else val
@@ -249,11 +253,11 @@ def _translate_conic_inner(inner: str) -> str | None:
         stop_start = 1
         descriptor = args[0]
 
-        from_m = re.search(r"\bfrom\s+(-?[\d.]+)deg\b", descriptor, re.IGNORECASE)
+        from_m = _FROM_ANGLE_RE.search(descriptor)
         if from_m:
             angle = float(from_m.group(1))
 
-        at_m = re.search(r"\bat\s+([\d.]+%?)\s+([\d.]+%?)", descriptor, re.IGNORECASE)
+        at_m = _AT_POS_RE.search(descriptor)
         if at_m:
             cx = _parse_pos_value(at_m.group(1))
             cy = _parse_pos_value(at_m.group(2))

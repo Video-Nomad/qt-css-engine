@@ -1,66 +1,198 @@
-.cpu-popup .header .pin-btn {
-    font-size: 14px;
-    font-family: 'Segoe Fluent Icons';
+/*
+Qt CSS Engine — demo
+/* ---------------------------------- shell ------------------------------ */
+#app-window {
+    background-color: #121216;
+}
+
+.app-header {
+    background-color: #17171d;
+    border-bottom: 1px solid #2a2a33;
+}
+
+.app-title {
+    color: #ffffff;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.app-sub {
+    color: #9a9aa5;
+    font-size: 12px;
+}
+
+.reload-path {
+    color: #55555f;
+    font-size: 11px;
+}
+
+.reload-pill {
+    background-color: #1a3a24;
+    color: #66dd88;
+    border: 1px solid #2a6a3f;
+    border-radius: 99px;
+    padding: 6px 14px;
+    font-size: 12px;
+}
+
+.app-body {
+    background-color: #121216;
+}
+
+.app-nav {
+    background-color: #17171d;
+    border-right: 1px solid #2a2a33;
+}
+
+.nav-heading {
+    color: #66667a;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    padding: 4px 8px;
+}
+
+.nav-btn {
+    background-color: transparent;
+    color: #b8b8c4;
     border: none;
-    padding: 6px;
-    color: white;
-    background: linear-gradient(0deg,
-                      rgb(94, 102, 106) 0%,
-                      rgb(41, 48, 53) 100%);
-    transition: all 300ms ease;
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 13px;
+    text-align: left;
+    transition: all 150ms ease;
 }
 
-.cpu-popup .header .pin-btn:hover {
-    background: red;
+.nav-btn:hover {
+    background-color: #23232c;
+    color: #ffffff;
 }
 
-#box {
-    background-color: #444444;
-    color: white;
-    border: 3px solid green;
-    border-radius: 4px;
-    box-shadow: 0 0 0 white;
-    cursor: pointer;
-    transition: all 300ms ease;
+.nav-hint {
+    color: #55555f;
+    font-size: 11px;
+    padding: 8px;
 }
 
-#box:hover {
-    box-shadow: 0 0 50 blue;
+QScrollArea {
+    border: none;
+    background: transparent;
 }
 
+.app-scroll {
+    background-color: transparent;
+}
+
+.app-content {
+    background-color: transparent;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 4px 2px 4px 2px;
+    border: none;
+}
+
+QScrollBar::handle:vertical {
+    background: #2c2c36;
+    border-radius: 5px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #3a3a46;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: none;
+    border: none;
+}
+
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+/* ---------------------------------- cards ------------------------------ */
+.card {
+    background-color: #1b1b22;
+    border: 1px solid #2c2c36;
+    border-radius: 12px;
+    padding: 18px;
+}
+
+.card-title {
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.card-sub {
+    color: #9a9aa5;
+    font-size: 12px;
+}
+
+.hint {
+    color: #6d6d7a;
+    font-size: 11px;
+}
+
+.stat {
+    background-color: #23232c;
+    color: #c9c9d4;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.footer {
+    color: #55555f;
+    font-size: 11px;
+    padding: 8px;
+}
+
+/* ------------------------------- buttons ------------------------------- */
 .btn,
 .label {
-    background-color: #444444;
+    background-color: #2e2e38;
     color: white;
-    border: 3px solid rgba(255, 0, 0, 0.1);
-    border-radius: 4px;
+    border: 2px solid #2e2e38;
+    border-radius: 8px;
     padding: 10px 20px;
+    font-size: 13px;
     transition: all 300ms ease;
 }
 
 .btn:hover,
 .label:hover {
-    background-color: orange;
-    border-color: red;
+    background-color: #b36100;
+    border-color: #ff9f43;
     border-radius: 99px;
-    border: 3px solid rgba(255, 0, 0, 0.9);
 }
 
 .btn:pressed,
 .label:pressed {
     color: white;
-    background-color: #505050;
+    background-color: #505060;
     border-color: white;
 }
 
+/* Per-property timing showcase: each property runs on its own clock. */
 .btn-container .btn {
-    background-color: #444444;
+    background-color: #2e2e38;
     color: white;
-    border: 3px solid green;
-    border-bottom-color: blue;
-    border-radius: 4px;
+    border: 2px solid #3a7a3a;
+    border-bottom-color: #4d88ff;
+    border-radius: 8px;
     padding: 10px 20px;
-    transition: background-color 300ms ease, color 200ms linear, border-color 600ms;
+    transition: background-color 300ms ease, color 200ms linear, border-color 600ms ease;
+}
+
+.btn-container .btn:hover {
+    color: #ff8080;
+    background-color: #2a6a2a;
+    border-color: #ff5555;
 }
 
 .btn-container .btn:pressed {
@@ -69,226 +201,234 @@
     border-color: white;
 }
 
-.btn-container .btn:hover {
-    color: red;
-    background-color: #22dd22;
-    border-color: red;
-}
-
-#reveal {
-    background-color: #ff5555;
-    color: white;
-    opacity: 0.01;
-    box-shadow: 0 0 0 white;
-    transition: opacity 400ms;
-    transition: box-shadow 400ms;
-}
-
-#reveal:hover {
-    opacity: 1.0;
-    box-shadow: 0 0 30 blue;
-}
-
-.sidebar {
-    background-color: red;
-    border: 3px solid orange;
+/* :clicked always plays the full forward + reverse loop on click. */
+.clicked-btn {
+    background-color: #2d2d2d;
+    color: #cccccc;
+    border: 2px solid #555555;
     border-radius: 8px;
-    padding: 20px;
-    transition: border-radius 300ms linear;
+    padding: 12px 24px;
+    font-size: 13px;
+    transition: background-color 500ms ease, border-color 500ms ease, color 500ms ease;
 }
 
-.sidebar:hover {
-    border-radius: 1000px;
+.clicked-btn:hover {
+    background-color: #3d3d3d;
+    border-color: #777777;
 }
 
-.sidebar .action {
-    background-color: #663399;
+.clicked-btn:clicked {
+    background-color: #1a6bcc;
+    border-color: #5599ff;
     color: white;
-    min-height: 20px;
-    max-height: 20px;
-    border-width: 3px;
-    border-style: solid;
-    border-radius: 4px;
-    border-color: green;
-    box-shadow: 0 0 20 black;
-    transition: all 300ms ease;
 }
 
-.sidebar .action:hover {
-    box-shadow: 0 0 20 blue;
-}
-
-/* Text editor — tests :focus transitions */
+/* ------------------------------ focus ---------------------------------- */
 .editor {
-    background-color: #1e1e1e;
+    background-color: #141419;
     color: #cccccc;
     border-width: 2px;
     border-style: solid;
-    border-color: #444444;
+    border-color: #33333d;
     border-radius: 8px;
-    padding: 6px;
-    margin: 5px;
-    box-shadow: 0 0 0 black;
+    padding: 8px;
+    margin: 2px;
+    font-size: 13px;
     transition: all 200ms ease;
 }
 
 .editor:focus {
     border-color: #4d88ff;
-    box-shadow: 0 0 6 #4d88ff;
+    background-color: #101623;
 }
 
-/* Tab toggle — two QLabels sharing class "tab"; clicking sets class to "tab active" */
-.tab {
-    background-color: #1e1e1e;
-    color: #666666;
-    border-width: 0px;
-    border-bottom-width: 3px;
-    border-style: solid;
-    border-color: transparent;
-    border-radius: 0px;
-    padding: 10px 28px;
-    transition: all 250ms ease;
-}
-
-.tab:hover {
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
-    background-color: red;
-}
-
-.tab.active {
-    background-color: #2d2d2d;
-    color: #ffffff;
-    border-color: #4d88ff;
-}
-
-.tab.active:hover {
-    background-color: blue;
-}
-
-.size-hint-container .btn-custom {
-    background-color: #444444;
-    border: 3px solid blue;
-    border-radius: 4px;
-    padding: 10px 20px;
-    margin-right: 10px;
-    /* box-shadow: 0 0 40 blue; */
-    transition: all 0.6s ease;
-}
-
-.size-hint-container .btn-custom:hover {
-    min-width: 125px;
-    max-width: 125px;
-}
-
-/* Multiple buttons in one container and multiple containers */
-
-.workspaces .ws-btn {
-    background-color: #444444;
-    border: 3px solid darkgray;
-    border-radius: 4px;
-    padding: -4px;
-    margin-right: 10px;
-    transition: all 1.0s ease;
-}
-
-.workspaces .ws-btn:hover {
-    padding: 6px;
-    border-radius: 99px;
-    min-width: 200px;
-    max-width: 200px;
-}
-
-/* DynamicPropertyChange test — rotating .active class changes width + color */
-.cycle-btn {
-    background-color: #444444;
-    color: #aaaaaa;
-    border: 2px solid #555555;
-    border-radius: 4px;
-    padding: 8px 16px;
-    transition: all 300ms cubic-bezier(.53, -0.98, .52, 1.66);
-    transition: background-color 300ms 200ms ease;
-}
-
-.cycle-btn.active {
-    background-color: #4d88ff;
-    color: white;
-    border-color: #88aaff;
-    min-width: 140px;
-    max-width: 140px;
-    min-height: 30px;
-    max-height: 30px;
-}
-
-.cycle-btn:hover {
-    background-color: #666666;
-}
-
-.cycle-btn.active:hover {
-    background-color: #3366cc;
-}
-
-.workspaces .ws-btn .m-btn {
-    background-color: #444444;
-    border: 3px solid darkgray;
-    border-radius: 4px;
-    padding: 5px 10px;
-    margin-right: 10px;
-}
-
-.dynamic-label {
-    background-color: #0000ff;
-    color: white;
-    padding: 5px 10px;
-    margin-right: 10px;
-    min-height: 40px;
-    max-height: 40px;
-    transition: all 1000ms ease;
-}
-
-.dynamic-label.state1 {
-    background-color: #ff0000;
-    max-width: 120px;
-    min-width: 120px;
-}
-
-.dynamic-label.state2 {
-    background-color: #00ff00;
-    color: black;
-    max-width: 150px;
-    min-width: 150px;
-}
-
-.dynamic-label:hover {
-    transition: background-color 200ms ease;
-    background-color: pink;
-}
-
+/* ------------------------------ checked -------------------------------- */
 .checkable-btn {
-    background-color: red;
+    background-color: #5a2a2a;
+    color: white;
+    border: 2px solid #7a3a3a;
+    border-radius: 8px;
     padding: 10px 20px;
-    transition: background-color 200ms ease;
+    transition: background-color 200ms ease, border-color 200ms ease;
 }
 
 .checkable-btn:pressed {
-    background-color: pink;
+    background-color: #8a5a6a;
 }
 
 .checkable-btn:checked {
-    background-color: blue;
+    background-color: #1a4a8a;
+    border-color: #4d88ff;
 }
 
 .checkable-btn:checked:pressed {
-    background-color: orange;
+    background-color: #b36100;
+    border-color: #ff9f43;
 }
 
-/* steps() easing demo — hover to see discrete jumps */
+.check-box {
+    color: #9a9aa5;
+    font-size: 13px;
+    transition: color 200ms ease;
+}
+
+.check-box:checked {
+    color: #4d88ff;
+}
+
+/* --------------------------- opacity & shadow ---------------------------
+   NOTE: one graphics-effect slot per widget — #shadow-box owns box-shadow,
+   #fade-box owns opacity. Combining both on one widget drops the loser. */
+#shadow-box {
+    background-color: #2e2e38;
+    color: white;
+    border: 2px solid #3a7a3a;
+    border-radius: 8px;
+    padding: 20px;
+    font-size: 13px;
+    box-shadow: 0 0 0 rgba(255, 255, 255, 0);
+    cursor: pointer;
+    transition: all 300ms ease;
+}
+
+#shadow-box:hover {
+    box-shadow: 0 0 42 #4d88ff;
+    border-color: #4d88ff;
+}
+
+#fade-box {
+    background-color: #8a2a3a;
+    color: white;
+    border: 2px solid #a03a4a;
+    border-radius: 8px;
+    padding: 20px;
+    font-size: 13px;
+    opacity: 0.25;
+    transition: opacity 400ms ease, background-color 400ms ease;
+}
+
+#fade-box:hover {
+    opacity: 1.0;
+    background-color: #b33a4a;
+}
+
+/* --------------------------- static gradients -------------------------- */
+.grad {
+    border-radius: 8px;
+    padding: 16px;
+    color: white;
+    font-size: 12px;
+    border: none;
+}
+
+.grad-a {
+    background-color: linear-gradient(135deg, #4d88ff 0%, #9b51e0 100%);
+}
+
+.grad-b {
+    background-color: radial-gradient(circle, #2a9d8f 0%, #1a3a6b 100%);
+}
+
+.grad-c {
+    background-color: conic-gradient(from 0deg, #e85d04, #9b51e0, #4d88ff, #e85d04);
+}
+
+/* Gradient base can't interpolate — hover snaps straight to solid. */
+.grad-snap {
+    font-size: 13px;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 14px;
+    color: white;
+    background-color: linear-gradient(45deg, #4d88ff 0%, #9b51e0 100%);
+    transition: all 300ms ease;
+}
+
+.grad-snap:hover {
+    background-color: #b33a4a;
+}
+
+/* ------------------------------ cursors -------------------------------- */
+.cursor-demo {
+    background-color: #23232c;
+    color: #c9c9d4;
+    border: 1px solid #33333d;
+    border-radius: 8px;
+    padding: 8px 6px;
+    font-size: 11px;
+}
+
+.cursor-pointer {
+    cursor: pointer;
+}
+
+.cursor-text {
+    cursor: text;
+}
+
+.cursor-crosshair {
+    cursor: crosshair;
+}
+
+.cursor-grab {
+    cursor: grab;
+}
+
+.cursor-wait {
+    cursor: wait;
+}
+
+.cursor-not-allowed {
+    cursor: not-allowed;
+}
+
+/* ------------------------------- easing -------------------------------- */
+.ease-btn {
+    background-color: #1a3a6b;
+    color: white;
+    border: 2px solid #2a5a9b;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+}
+
+.ease-btn:hover {
+    background-color: #e85d04;
+    border-color: #ff9f43;
+}
+
+.ease-btn.e-linear {
+    transition: background-color 600ms linear;
+}
+
+.ease-btn.e-ease {
+    transition: background-color 600ms ease;
+}
+
+.ease-btn.e-ease-in {
+    transition: background-color 600ms ease-in;
+}
+
+.ease-btn.e-ease-out {
+    transition: background-color 600ms ease-out;
+}
+
+.ease-btn.e-ease-in-out {
+    transition: background-color 600ms ease-in-out;
+}
+
+.ease-btn.e-overshoot {
+    transition: background-color 600ms cubic-bezier(.53, -0.98, .52, 1.66);
+}
+
+/* steps() easing — discrete jumps over 1500ms so stages are visible. */
 .steps-btn {
     background-color: #1a3a6b;
     color: white;
     border: 2px solid #2a5a9b;
-    border-radius: 4px;
-    padding: 8px 14px;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 11px;
 }
 
 .steps-btn:hover {
@@ -311,73 +451,406 @@
     transition: background-color 1500ms step-start;
 }
 
-/* :clicked demo — animation always plays full forward then full reverse */
-.clicked-btn {
-    background-color: #2d2d2d;
-    color: #cccccc;
-    border: 2px solid #555555;
-    border-radius: 4px;
-    padding: 10px 24px;
-    transition: background-color 500ms ease, border-color 500ms ease, color 500ms ease;
+/* ---------------------------- delay & duration ------------------------- */
+.delay-btn {
+    background-color: #2e2e38;
+    color: white;
+    border: 2px solid #55555f;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
 }
 
-.clicked-btn:hover {
-    background-color: #3d3d3d;
-    border-color: #777777;
-}
-
-.clicked-btn:clicked {
+.delay-btn:hover {
     background-color: #1a6bcc;
     border-color: #5599ff;
+}
+
+.delay-btn.d-none {
+    transition: background-color 400ms ease;
+}
+
+.delay-btn.d-wait {
+    transition: background-color 400ms ease 400ms;
+}
+
+.delay-btn.d-negative {
+    transition: background-color 800ms ease -250ms;
+}
+
+/* Longhands override shorthand when both are present in one block. */
+.longhand-btn {
+    background-color: #2e2e38;
     color: white;
+    border: 2px solid #55555f;
+    border-radius: 8px;
+    padding: 12px 20px;
+    font-size: 13px;
+    transition-property: background-color, border-radius;
+    transition-duration: 300ms, 800ms;
+    transition-timing-function: ease, ease-in-out;
 }
 
-/* :active demo — transitions when window gains/loses focus */
-.active-demo {
-    background-color: #2a2a2a;
-    color: #555555;
-    border: 2px solid #3a3a3a;
-    border-radius: 4px;
-    padding: 12px 24px;
-    transition: all 400ms ease;
+.longhand-btn:hover {
+    background-color: #1a6bcc;
+    border-top-left-radius: 99px;
+    border-top-right-radius: 99px;
+    border-bottom-right-radius: 99px;
+    border-bottom-left-radius: 99px;
 }
 
-.active-demo:active {
-    background-color: #1a4a2a;
-    color: #66dd88;
-    border-color: #33aa55;
+/* ------------------------------ size morph ----------------------------- */
+.width-demo .width-btn {
+    background-color: #2e2e38;
+    color: white;
+    border: 2px solid #4d88ff;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-size: 13px;
+    transition: all 600ms ease;
 }
 
-.active-demo:hover {
-    background-color: #1a4a2a;
-    color: #66dd88;
-    border-color: #33aa55;
+.width-demo .width-btn:hover {
+    min-width: 150px;
+    max-width: 150px;
+    background-color: #1a3a6b;
 }
 
-/* event fallthrough test */
-.fallthrough-row {
+.morph-btn {
+    background-color: #2e2e38;
+    color: white;
+    border: 2px solid #55555f;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
+    transition: all 300ms ease;
+}
+
+.morph-btn.m-radius:hover {
+    border-radius: 99px;
+    background-color: #1a6bcc;
+}
+
+.morph-btn.m-border:hover {
+    border-width: 6px;
+    border-color: #e85d04;
+}
+
+.morph-btn.m-pad:hover {
+    padding: 20px 28px;
+    background-color: #2a6a2a;
+}
+
+/* ------------------------------- type ---------------------------------- */
+.type-btn {
+    background-color: #2e2e38;
+    color: white;
+    border: 2px solid #55555f;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 13px;
+    transition: all 300ms ease;
+}
+
+.type-btn.t-size:hover {
+    font-size: 20px;
+    background-color: #1a3a6b;
+}
+
+.type-btn.t-weight {
+    font-weight: 400;
+}
+
+.type-btn.t-weight:hover {
+    font-weight: 900;
+    background-color: #5a2a8a;
+}
+
+.type-label-spacing {
+    background-color: #23232c;
+    color: #c9c9d4;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 13px;
+    letter-spacing: 1px;
+    transition: letter-spacing 400ms ease, background-color 400ms ease;
+}
+
+.type-label-spacing:hover {
+    letter-spacing: 6px;
     background-color: #1a3a6b;
     color: white;
+}
+
+/* ------------------------------- tabs ---------------------------------- */
+.tab {
+    background-color: transparent;
+    color: #66667a;
+    border-width: 0px;
+    border-bottom-width: 3px;
+    border-style: solid;
+    border-color: transparent;
+    border-radius: 0px;
+    padding: 10px 28px;
+    font-size: 13px;
+    transition: all 250ms ease;
+}
+
+.tab:hover {
+    background-color: #23232c;
+    color: #ffffff;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+}
+
+.tab.active {
+    background-color: #23232c;
+    color: #ffffff;
+    border-color: #4d88ff;
+}
+
+.tab.active:hover {
+    background-color: #1a3a6b;
+}
+
+/* ------------------------- dynamic .active cycle ----------------------- */
+.cycle-btn {
+    background-color: #2e2e38;
+    color: #aaaaaa;
+    border: 2px solid #555555;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 12px;
+    transition: all 300ms cubic-bezier(.53, -0.98, .52, 1.66);
+}
+
+.cycle-btn.active {
+    background-color: #4d88ff;
+    color: white;
+    border-color: #88aaff;
+    min-width: 140px;
+    max-width: 140px;
+    min-height: 32px;
+    max-height: 32px;
+}
+
+.cycle-btn:hover {
+    background-color: #3d3d4a;
+}
+
+.cycle-btn.active:hover {
+    background-color: #3366cc;
+}
+
+/* Timer-driven class rotation: base -> state1 -> state2. */
+.dynamic-label {
+    background-color: #1a3a6b;
+    color: white;
+    border-radius: 8px;
+    padding: 12px 10px;
+    font-size: 13px;
+    min-height: 44px;
+    max-height: 44px;
+    transition: all 1000ms ease;
+}
+
+.dynamic-label.state1 {
+    background-color: #8a2a2a;
+    max-width: 260px;
+    min-width: 260px;
+}
+
+.dynamic-label.state2 {
+    background-color: #2a7a3a;
+    color: white;
+    max-width: 340px;
+    min-width: 340px;
+}
+
+.dynamic-label:hover {
+    background-color: #b36100;
+}
+
+/* --------------------------- nesting & scope --------------------------- */
+.nest-parent {
+    background-color: #20202a;
+    border: 2px solid #4d88ff;
+    border-radius: 12px;
+    padding: 14px;
+    transition: border-radius 300ms linear, border-color 300ms ease;
+}
+
+.nest-parent:hover {
+    border-radius: 28px;
+    border-color: #88aaff;
+}
+
+.nest-caption {
+    color: #9a9aa5;
+    font-size: 11px;
+}
+
+.nest-parent .nest-child {
+    background-color: #4a3585;
+    color: white;
+    min-height: 28px;
+    max-height: 28px;
+    border-width: 2px;
+    border-style: solid;
+    border-radius: 8px;
+    border-color: #6a55a5;
+    padding: 6px 12px;
+    font-size: 12px;
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+    transition: all 300ms ease;
+}
+
+.nest-parent .nest-child:hover {
+    box-shadow: 0 0 24 #4d88ff;
+    background-color: #5a45a5;
+}
+
+/* Nested pills: hovering the pill stretches it over 1s. */
+.nest-row .nest-pill {
+    background-color: #20202a;
+    border: 2px solid #3a3a46;
+    border-radius: 12px;
+    padding: 4px;
+    transition: all 1.0s ease;
+}
+
+.nest-row .nest-pill:hover {
+    padding: 8px;
+    border-radius: 99px;
+    border-color: #4d88ff;
+    min-width: 210px;
+    max-width: 210px;
+}
+
+.nest-row .nest-pill .nest-mini {
+    background-color: #2e2e38;
+    color: white;
+    border: 2px solid #3a3a46;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+/* Click fallthrough: parent should not flash when child is clicked. */
+.fallthrough-row {
+    background-color: #1a2a4a;
     border: 2px solid #2a5a9b;
-    border-radius: 4px;
-    padding: 8px 14px;
+    border-radius: 10px;
+    padding: 10px;
     transition: background-color 500ms ease;
 }
 
 .fallthrough-row:clicked {
-    background-color: red;
+    background-color: #8a2a2a;
 }
 
 .fallthrough-row .fallthrough-btn {
     background-color: #1a3a6b;
     color: white;
     border: 2px solid #2a5a9b;
-    border-radius: 4px;
+    border-radius: 8px;
     padding: 8px 14px;
     transition: background-color 500ms ease;
 }
 
 .fallthrough-row .fallthrough-btn:pressed,
 .fallthrough-row .fallthrough-btn:clicked {
-    background-color: red;
+    background-color: #e85d04;
+}
+
+/* --------------------------- window :active ---------------------------- */
+.active-demo {
+    background-color: #23232c;
+    color: #6d6d7a;
+    border: 2px solid #33333d;
+    border-radius: 8px;
+    padding: 12px 24px;
+    font-size: 13px;
+    transition: all 400ms ease;
+}
+
+.active-demo:active {
+    background-color: #1a3a24;
+    color: #66dd88;
+    border-color: #33aa55;
+}
+
+.active-demo:hover {
+    background-color: #1a3a24;
+    color: #66dd88;
+    border-color: #33aa55;
+}
+
+/* ------------------- attributes & specificity -------------------- */
+.attr-btn,
+.attr-btn-quoted {
+    background-color: #2e2e38;
+    color: white;
+    border: 2px solid #55555f;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
+    transition: background-color 300ms ease, border-color 300ms ease;
+}
+
+/* Bare vs quoted attr values are equivalent — both match setProperty(..., True). */
+.attr-btn[customAttr=true] {
+    background-color: #1a6b3a;
+    border-color: #33aa55;
+}
+
+.attr-btn-quoted[customAttr="true"] {
+    background-color: #1a6b3a;
+    border-color: #33aa55;
+}
+
+/* Specificity: #spec-id (1,0,0) beats .spec-btn (0,1,0) even though the class
+   rule comes later in source order. */
+#spec-id {
+    background-color: #1a6bcc;
+}
+
+.spec-btn {
+    background-color: #8a2a2a;
+    color: white;
+    border: 2px solid #55555f;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
+    transition: background-color 400ms ease;
+}
+
+/* Type#id: only a QPushButton named typeid-btn matches. */
+QPushButton#typeid-btn {
+    background-color: #2e2e38;
+    color: white;
+    border: 2px solid #55555f;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
+    transition: background-color 300ms ease;
+}
+
+QPushButton#typeid-btn:hover {
+    background-color: #5a2a8a;
+    border-color: #9b51e0;
+}
+
+/* ------------------------------ playground ----------------------------- */
+.dynamic-host {
+    background-color: transparent;
+    border: 1px dashed #33333d;
+    border-radius: 10px;
+    padding: 12px;
+}
+
+.placeholder {
+    color: #55555f;
+    font-size: 12px;
+    padding: 10px;
 }
