@@ -1,8 +1,5 @@
-/* ==========================================================================
-   Qt CSS Engine — Gallery demo
-   Static chrome first, animated showcases below.
-   ========================================================================== */
-
+/*
+Qt CSS Engine — demo
 /* ---------------------------------- shell ------------------------------ */
 #app-window {
     background-color: #121216;
@@ -272,7 +269,6 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 .check-box {
     color: #9a9aa5;
     font-size: 13px;
-    spacing: 8px;
     transition: color 200ms ease;
 }
 
@@ -281,9 +277,9 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 }
 
 /* --------------------------- opacity & shadow ---------------------------
-   NOTE: one graphics-effect slot per widget — #box owns box-shadow,
-   #reveal owns opacity. Combining both on one widget drops the loser. */
-#box {
+   NOTE: one graphics-effect slot per widget — #shadow-box owns box-shadow,
+   #fade-box owns opacity. Combining both on one widget drops the loser. */
+#shadow-box {
     background-color: #2e2e38;
     color: white;
     border: 2px solid #3a7a3a;
@@ -295,12 +291,12 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     transition: all 300ms ease;
 }
 
-#box:hover {
+#shadow-box:hover {
     box-shadow: 0 0 42 #4d88ff;
     border-color: #4d88ff;
 }
 
-#reveal {
+#fade-box {
     background-color: #8a2a3a;
     color: white;
     border: 2px solid #a03a4a;
@@ -311,7 +307,7 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     transition: opacity 400ms ease, background-color 400ms ease;
 }
 
-#reveal:hover {
+#fade-box:hover {
     opacity: 1.0;
     background-color: #b33a4a;
 }
@@ -335,6 +331,21 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 
 .grad-c {
     background-color: conic-gradient(from 0deg, #e85d04, #9b51e0, #4d88ff, #e85d04);
+}
+
+/* Gradient base can't interpolate — hover snaps straight to solid. */
+.grad-snap {
+    font-size: 13px;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 14px;
+    color: white;
+    background-color: linear-gradient(45deg, #4d88ff 0%, #9b51e0 100%);
+    transition: all 300ms ease;
+}
+
+.grad-snap:hover {
+    background-color: #b33a4a;
 }
 
 /* ------------------------------ cursors -------------------------------- */
@@ -489,7 +500,7 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 }
 
 /* ------------------------------ size morph ----------------------------- */
-.size-hint-container .btn-custom {
+.width-demo .width-btn {
     background-color: #2e2e38;
     color: white;
     border: 2px solid #4d88ff;
@@ -499,7 +510,7 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     transition: all 600ms ease;
 }
 
-.size-hint-container .btn-custom:hover {
+.width-demo .width-btn:hover {
     min-width: 150px;
     max-width: 150px;
     background-color: #1a3a6b;
@@ -661,7 +672,7 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 }
 
 /* --------------------------- nesting & scope --------------------------- */
-.sidebar {
+.nest-parent {
     background-color: #20202a;
     border: 2px solid #4d88ff;
     border-radius: 12px;
@@ -669,17 +680,17 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     transition: border-radius 300ms linear, border-color 300ms ease;
 }
 
-.sidebar:hover {
+.nest-parent:hover {
     border-radius: 28px;
     border-color: #88aaff;
 }
 
-.sidebar-title {
+.nest-caption {
     color: #9a9aa5;
     font-size: 11px;
 }
 
-.sidebar .action {
+.nest-parent .nest-child {
     background-color: #4a3585;
     color: white;
     min-height: 28px;
@@ -694,13 +705,13 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     transition: all 300ms ease;
 }
 
-.sidebar .action:hover {
+.nest-parent .nest-child:hover {
     box-shadow: 0 0 24 #4d88ff;
     background-color: #5a45a5;
 }
 
-/* Workspaces: hovering the pill stretches it over 1s. */
-.workspaces .ws-btn {
+/* Nested pills: hovering the pill stretches it over 1s. */
+.nest-row .nest-pill {
     background-color: #20202a;
     border: 2px solid #3a3a46;
     border-radius: 12px;
@@ -708,7 +719,7 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     transition: all 1.0s ease;
 }
 
-.workspaces .ws-btn:hover {
+.nest-row .nest-pill:hover {
     padding: 8px;
     border-radius: 99px;
     border-color: #4d88ff;
@@ -716,7 +727,7 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     max-width: 210px;
 }
 
-.workspaces .ws-btn .m-btn {
+.nest-row .nest-pill .nest-mini {
     background-color: #2e2e38;
     color: white;
     border: 2px solid #3a3a46;
@@ -725,22 +736,7 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     font-size: 12px;
 }
 
-/* Three-level descendant regression case. */
-.cpu-popup .header .pin-btn {
-    font-size: 13px;
-    border: none;
-    border-radius: 8px;
-    padding: 8px 14px;
-    color: white;
-    background-color: #3a4146;
-    transition: all 300ms ease;
-}
-
-.cpu-popup .header .pin-btn:hover {
-    background-color: #b33a4a;
-}
-
-/* Click fallthrough: parent flashes when any child is clicked. */
+/* Click fallthrough: parent should not flash when child is clicked. */
 .fallthrough-row {
     background-color: #1a2a4a;
     border: 2px solid #2a5a9b;
