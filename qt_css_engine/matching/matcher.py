@@ -222,15 +222,6 @@ class RuleMatcher:
             ancestor = ancestor.parent()
         return idents
 
-    def ancestor_widgets(self, widget: QWidget) -> list[QWidget]:
-        ancestors: list[QWidget] = []
-        ancestor: QObject | None = widget.parent()
-        while ancestor is not None:
-            if isinstance(ancestor, QWidget):
-                ancestors.append(ancestor)
-            ancestor = ancestor.parent()
-        return ancestors
-
     def match_ancestor_identities(self, idents: list[WidgetIdentity], segments: list[str]) -> bool:
         seg_idx = len(segments) - 2
         if seg_idx < 0:
