@@ -22,6 +22,7 @@ from qt_css_engine.state.store import WidgetStore
 from qt_css_engine.state.suppress import is_suppressed
 from qt_css_engine.style.writer import StyleWriter
 from qt_css_engine.types import WidgetContext
+from qt_css_engine.utils.qt_helpers import safe_disconnect
 
 if TYPE_CHECKING:
     from qt_css_engine.css.model import StyleRule
@@ -63,6 +64,8 @@ class TransitionEngine(QObject):
         startup_delay_ms: animations are suppressed for this many milliseconds after
         construction so that initial layout polish events don't trigger spurious transitions.
         Set to 0 to enable immediately (synchronous — useful in tests).
+        Assigning `animations_enabled` manually cancels the pending timer, so
+        explicit intent always wins over the scheduled auto-enable.
 
         effect_priority: which effect wins the single QGraphicsEffect slot — "opacity"
         or "box-shadow". When both are declared the loser is silently dropped.
@@ -72,11 +75,15 @@ class TransitionEngine(QObject):
         self.cascade = CascadeEvaluator(self.matcher, PseudoMachine.priority)
         self.effect_priority = effect_priority
 
-        if startup_delay_ms <= 0:
-            self.animations_enabled = True
-        else:
-            self.animations_enabled = False
-            QTimer.singleShot(startup_delay_ms, lambda: self._on_startup_done())
+        self._animations_enabled = True
+        self._startup_timer: QTimer | None = None
+        if startup_delay_ms > 0:
+            self._animations_enabled = False
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._on_startup_done)
+            self._startup_timer = timer
+            timer.start(startup_delay_ms)
 
         # Single source of truth for per-widget state.
         self.store = WidgetStore()
@@ -107,9 +114,37 @@ class TransitionEngine(QObject):
     def should_evaluate(self, widget: QWidget) -> bool:
         return self.matcher.should_evaluate(widget, self.store.contexts.get(id(widget)))
 
+    @property
+    def animations_enabled(self) -> bool:
+        """Whether transitions animate (False → snap to target).
+        Writing this property cancels any pending startup auto-enable.
+        """
+        return self._animations_enabled
+
+    @animations_enabled.setter
+    def animations_enabled(self, value: bool) -> None:
+        self._animations_enabled = value
+        self._cancel_startup_timer()
+
+    def _cancel_startup_timer(self) -> None:
+        """Stop and release the pending startup timer, if any."""
+        timer = self._startup_timer
+        self._startup_timer = None
+        if timer is not None:
+            try:
+                timer.stop()
+                safe_disconnect(timer.timeout)
+                timer.deleteLater()
+            except RuntimeError:
+                pass
+
     def _on_startup_done(self) -> None:
         """Enable animations after the startup delay has elapsed."""
-        self.animations_enabled = True
+        timer = self._startup_timer
+        self._startup_timer = None
+        if timer is not None:
+            timer.deleteLater()
+        self._animations_enabled = True
 
     def get_context(self, widget: QWidget) -> WidgetContext:
         """Get or create the context for a widget via the store."""
