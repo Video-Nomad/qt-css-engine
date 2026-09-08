@@ -1,14 +1,13 @@
-"""Polish queue — deferred evaluation after a Polish burst.
-
-Owns pending/queue/force_ids. Qt scheduling and widget behavior stay in
-TransitionEngine, passed in as callbacks, so this module needs no engine import.
-"""
+"""Polish queue — deferred evaluation after a Polish burst."""
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.qt_compat.QtWidgets import QWidget
-from qt_css_engine.types import WidgetContext
+
+if TYPE_CHECKING:
+    from qt_css_engine.engine.transition_engine import TransitionEngine
 
 __all__ = ["PolishQueue"]
 
@@ -28,14 +27,7 @@ class PolishQueue:
             schedule_flush()
         self.queue.append(widget)
 
-    def flush(
-        self,
-        *,
-        ensure_wa_hover: Callable[[QWidget], None],
-        seed_active_pseudo: Callable[[QWidget], None],
-        get_context: Callable[[QWidget], WidgetContext | None],
-        evaluate: Callable[[QWidget, EvaluationCause], None],
-    ) -> None:
+    def flush(self, engine: TransitionEngine) -> None:
         self.pending = False
         widgets, self.queue = self.queue, []
         force_ids, self.force_ids = self.force_ids, set()
@@ -46,10 +38,10 @@ class PolishQueue:
                 if wid in seen:
                     continue
                 seen.add(wid)
-                ensure_wa_hover(w)
-                seed_active_pseudo(w)
-                ctx = get_context(w)
+                engine.ensure_wa_hover(w)
+                engine.seed_active_pseudo(w)
+                ctx = engine.store.get(w)
                 if wid in force_ids or ctx is None or not ctx.active_animations:
-                    evaluate(w, EvaluationCause.POLISH)
+                    engine.evaluate_widget_state(w, cause=EvaluationCause.POLISH)
             except RuntimeError:
                 pass

@@ -1,10 +1,11 @@
 """Cascade evaluation — collect base/target props, transitions, animated props."""
 
 from qt_css_engine.constants import BORDER_RADIUS_PROPS, EFFECT_PROPS
+from qt_css_engine.engine.evaluation import ResolvedRuleState
 from qt_css_engine.geometry.clamp import clamp_border_radius, target_border_radius_box_size
 from qt_css_engine.matching.matcher import RuleMatcher
 from qt_css_engine.qt_compat.QtWidgets import QWidget
-from qt_css_engine.types import ResolvedRuleState, WidgetContext
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.utils.parsing import parse_css_numeric
 
 
@@ -15,7 +16,7 @@ class CascadeEvaluator:
         self._matcher = matcher
         self._priority = pseudo_priority
 
-    def collect(self, widget: QWidget, ctx: WidgetContext) -> ResolvedRuleState:
+    def collect(self, widget: QWidget, ctx: WidgetState) -> ResolvedRuleState:
         state = ResolvedRuleState()
         # Per-prop winners: CSS2 (specificity, order) with the engine's pseudo
         # priority kept as a tiebreak inside equal specificity so :pressed still
@@ -58,7 +59,7 @@ class CascadeEvaluator:
         self.collect_border_radius(widget, ctx, state)
         return state
 
-    def expand_all(self, ctx: WidgetContext, state: ResolvedRuleState) -> None:
+    def expand_all(self, ctx: WidgetState, state: ResolvedRuleState) -> None:
         all_spec = state.transitions.pop("all", None)
         state.animated_props.discard("all")
         for prop in set(state.base_props) | set(state.target_props):
@@ -73,7 +74,7 @@ class CascadeEvaluator:
                     state.animated_props.add(prop)
                     state.transitions[prop] = all_spec
 
-    def collect_border_radius(self, widget: QWidget, ctx: WidgetContext, state: ResolvedRuleState) -> None:
+    def collect_border_radius(self, widget: QWidget, ctx: WidgetState, state: ResolvedRuleState) -> None:
         box_size: tuple[float, float] | None = None
         box_resolved = False
         for prop in BORDER_RADIUS_PROPS:

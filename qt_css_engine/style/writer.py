@@ -7,8 +7,8 @@ from qt_css_engine.constants import BORDER_RADIUS_PROPS
 from qt_css_engine.geometry.clamp import clamp_border_radius, target_border_radius_box_size
 from qt_css_engine.qt_compat.QtCore import QTimer
 from qt_css_engine.qt_compat.QtWidgets import QWidget
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.effects import update_shadow_ancestor
-from qt_css_engine.types import WidgetContext
 from qt_css_engine.utils.parsing import parse_css_numeric
 
 _scope_counter = itertools.count(1)
@@ -35,14 +35,14 @@ class StyleWriter:
     style_flush_immediate for its first frame so it lands synchronously.
     """
 
-    def __init__(self, get_ctx: Callable[[int], WidgetContext | None] | None = None) -> None:
+    def __init__(self, get_ctx: Callable[[int], WidgetState | None] | None = None) -> None:
         self._get_ctx = get_ctx
 
-    def bind(self, get_ctx: Callable[[int], WidgetContext | None]) -> None:
+    def bind(self, get_ctx: Callable[[int], WidgetState | None]) -> None:
         """Bind the widget-id -> context lookup used by deferred flushes."""
         self._get_ctx = get_ctx
 
-    def schedule(self, widget: QWidget, ctx: WidgetContext) -> None:
+    def schedule(self, widget: QWidget, ctx: WidgetState) -> None:
         """Queue one stylesheet write after the current burst of animation ticks."""
         # style_flush_immediate is set for the duration of a class-change evaluation so the
         # first frame lands before Qt can paint the freshly polished class styles.  It is not
@@ -61,7 +61,7 @@ class StyleWriter:
         else:
             QTimer.singleShot(0, lambda: self.flush_scheduled(widget, wid, get_ctx))
 
-    def _flush_captured(self, widget: QWidget, ctx: WidgetContext) -> None:
+    def _flush_captured(self, widget: QWidget, ctx: WidgetState) -> None:
         if not ctx.style_flush_pending:
             return
         try:
@@ -73,7 +73,7 @@ class StyleWriter:
         self,
         widget: QWidget,
         wid: int,
-        get_ctx: Callable[[int], WidgetContext | None] | None = None,
+        get_ctx: Callable[[int], WidgetState | None] | None = None,
     ) -> None:
         lookup = get_ctx or self._get_ctx
         ctx = lookup(wid) if lookup is not None else None
@@ -84,7 +84,7 @@ class StyleWriter:
         except RuntimeError:
             ctx.style_flush_pending = False
 
-    def flush_now(self, widget: QWidget, ctx: WidgetContext) -> None:
+    def flush_now(self, widget: QWidget, ctx: WidgetState) -> None:
         """Normalize interdependent inline props and apply them as one scoped stylesheet."""
         ctx.style_flush_pending = False
         self.normalize(widget, ctx)
@@ -100,7 +100,7 @@ class StyleWriter:
             widget.setStyleSheet(style)
         update_shadow_ancestor(widget)
 
-    def normalize(self, widget: QWidget, ctx: WidgetContext) -> None:
+    def normalize(self, widget: QWidget, ctx: WidgetState) -> None:
         """Clamp radius values against the same pending box model that is about to be applied."""
         props = ctx.css_anim_props
         # Resolving the target box size reads sizeHint() and re-parses the box model; skip it

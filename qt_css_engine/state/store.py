@@ -5,29 +5,29 @@ lives in TransitionEngine, which owns this store.
 """
 
 from qt_css_engine.qt_compat.QtWidgets import QWidget
-from qt_css_engine.types import WidgetContext
+from qt_css_engine.state.widget_state import WidgetState
 
 
 class WidgetStore:
-    """Maps id(widget) -> WidgetContext plus id -> widget mirror."""
+    """Maps id(widget) -> WidgetState plus id -> widget mirror."""
 
     def __init__(self) -> None:
-        self.contexts: dict[int, WidgetContext] = {}
+        self.contexts: dict[int, WidgetState] = {}
         self.widgets: dict[int, QWidget] = {}
 
-    def get(self, widget: QWidget) -> WidgetContext | None:
+    def get(self, widget: QWidget) -> WidgetState | None:
         return self.contexts.get(id(widget))
 
-    def get_or_create(self, widget: QWidget) -> WidgetContext:
+    def get_or_create(self, widget: QWidget) -> WidgetState:
         wid = id(widget)
         ctx = self.contexts.get(wid)
         if ctx is None:
-            ctx = WidgetContext()
+            ctx = WidgetState()
             self.contexts[wid] = ctx
             self.widgets[wid] = widget
         return ctx
 
-    def remove(self, wid: int) -> WidgetContext | None:
+    def remove(self, wid: int) -> WidgetState | None:
         self.widgets.pop(wid, None)
         return self.contexts.pop(wid, None)
 

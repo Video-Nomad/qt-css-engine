@@ -19,7 +19,7 @@ import qt_css_engine
 from qt_css_engine import TransitionEngine
 from qt_css_engine.animation.base import StepsReversalMixin
 from qt_css_engine.animation.color import ColorAnimation
-from qt_css_engine.animation.factory import create_animator
+from qt_css_engine.animation.factory import Animation, create_animator
 from qt_css_engine.animation.numeric import GenericPropertyAnimation
 from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
@@ -30,8 +30,7 @@ from qt_css_engine.css.gradients import (
     translate_gradients,
 )
 from qt_css_engine.css.parser import extract_rules
-from qt_css_engine.easing import resolve_easing_curve
-from qt_css_engine.engine.evaluation import EvaluationCause
+from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedRuleState
 from qt_css_engine.engine.evaluator import Evaluation
 from qt_css_engine.geometry.box_model import (
     content_box_px,
@@ -57,12 +56,11 @@ from qt_css_engine.qt_compat.QtWidgets import (
 )
 from qt_css_engine.state.pseudo import PseudoMachine
 from qt_css_engine.state.store import WidgetStore
-from qt_css_engine.state.suppress import is_suppressed, suppress
+from qt_css_engine.state.suppress import InternalWriteReason, is_suppressed, suppress
 from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.writer import StyleWriter, scoped_anim_style
-from qt_css_engine.types import Animation, InternalWriteReason, ResolvedRuleState, WidgetContext
 from qt_css_engine.utils.color import parse_box_shadow, parse_color
-from qt_css_engine.utils.easing import make_cubic_bezier_curve, make_steps_curve
+from qt_css_engine.utils.easing import make_cubic_bezier_curve, make_steps_curve, resolve_easing_curve
 from qt_css_engine.utils.parsing import parse_css_numeric, parse_css_val
 from qt_css_engine.utils.qt_helpers import safe_disconnect
 
@@ -142,7 +140,7 @@ def test_color_animation_without_ctx_fallback_style(_app: QApplication) -> None:
 
 def test_numeric_on_tick_none_stops(_app: QApplication) -> None:
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     try:
         anim = GenericPropertyAnimation(widget, "width", 10.0, 200, QEasingCurve.Type.Linear, ctx=ctx)
         anim.set_target("50px")
@@ -154,7 +152,7 @@ def test_numeric_on_tick_none_stops(_app: QApplication) -> None:
 
 def test_numeric_set_target_invalid_string_noop(_app: QApplication) -> None:
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     try:
         anim = GenericPropertyAnimation(widget, "width", 10.0, 200, QEasingCurve.Type.Linear, ctx=ctx)
         anim.set_target("not-a-length!!!")
@@ -208,7 +206,7 @@ def test_shadow_set_target_same_noop(_app: QApplication) -> None:
 
 def test_generic_snap_to_natural_removes_prop(_app: QApplication) -> None:
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     try:
         anim = GenericPropertyAnimation(widget, "width", 100.0, 200, QEasingCurve.Type.Linear, ctx=ctx)
         ctx.css_anim_props["width"] = "100.000px"
@@ -1163,7 +1161,7 @@ def test_store_remove_contains_clear(_app: QApplication) -> None:
 
 
 def test_suppress_nested_restores_reason() -> None:
-    ctx = WidgetContext()
+    ctx = WidgetState()
     assert is_suppressed(None) is False
     assert is_suppressed(ctx) is False
     with suppress(ctx, InternalWriteReason.CLASS_CHANGE):
@@ -1219,7 +1217,7 @@ def test_widget_state_setters() -> None:
 def test_writer_schedule_unbound_uses_captured_flush(_app: QApplication, qtbot: QtBot) -> None:
     writer = StyleWriter()  # no get_ctx bound → _flush_captured path
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     ctx.css_anim_props["color"] = "red"
     try:
         writer.schedule(widget, ctx)
@@ -1232,7 +1230,7 @@ def test_writer_schedule_unbound_uses_captured_flush(_app: QApplication, qtbot: 
 def test_writer_flush_captured_no_pending_noop(_app: QApplication) -> None:
     writer = StyleWriter()
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     try:
         writer._flush_captured(widget, ctx)  # pending False → no write
         assert widget.styleSheet() == ""
@@ -1243,7 +1241,7 @@ def test_writer_flush_captured_no_pending_noop(_app: QApplication) -> None:
 def test_writer_flush_scheduled_guards(_app: QApplication) -> None:
     writer = StyleWriter(get_ctx=lambda _wid: None)
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     try:
         writer.flush_scheduled(widget, 999999)  # unknown wid → no-op
         ctx.style_flush_pending = False
@@ -1259,11 +1257,11 @@ def test_writer_normalize_skips_without_radii_and_invalid(_app: QApplication) ->
     widget = QWidget()
     widget.resize(100, 100)
     try:
-        ctx = WidgetContext()
+        ctx = WidgetState()
         ctx.css_anim_props["color"] = "red"
         writer.normalize(widget, ctx)  # no radii → early return
         assert ctx.css_anim_props["color"] == "red"
-        ctx2 = WidgetContext()
+        ctx2 = WidgetState()
         ctx2.css_anim_props["border-top-left-radius"] = "auto"  # unparsable → skipped
         writer.normalize(widget, ctx2)
         assert ctx2.css_anim_props["border-top-left-radius"] == "auto"
@@ -1364,7 +1362,7 @@ def test_is_qobject_alive_guards() -> None:
 def test_safe_disconnect_no_crash(_app: QApplication) -> None:
     widget = QWidget()
     try:
-        anim = GenericPropertyAnimation(widget, "width", 10.0, 200, QEasingCurve.Type.Linear, ctx=WidgetContext())
+        anim = GenericPropertyAnimation(widget, "width", 10.0, 200, QEasingCurve.Type.Linear, ctx=WidgetState())
         safe_disconnect(anim.anim.finished)  # nothing connected → no-op
         cb = lambda: None
         anim.anim.finished.connect(cb)
@@ -1623,7 +1621,7 @@ def test_delay_cancel_all_and_cancel_missing(_app: QApplication) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_polish_flush_skips_running_and_dedups(_app: QApplication) -> None:
+def test_polish_flush_skips_running_and_dedups(_app: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
     from qt_css_engine.engine.handlers.polish import PolishQueue
 
     engine = make_engine("""
@@ -1639,17 +1637,13 @@ def test_polish_flush_skips_running_and_dedups(_app: QApplication) -> None:
         q.pending = False
         evaluated: list[QWidget] = []
 
-        def _eval(w: QWidget, _cause: EvaluationCause) -> None:
+        def _spy(w: QWidget, cause: EvaluationCause = EvaluationCause.DIRECT) -> None:
             evaluated.append(w)
 
+        monkeypatch.setattr(engine, "evaluate_widget_state", _spy)
         q.enqueue(widget, schedule_flush=lambda: None)
         q.enqueue(widget, schedule_flush=lambda: None)  # duplicate in same burst
-        q.flush(
-            ensure_wa_hover=lambda _w: None,
-            seed_active_pseudo=lambda _w: None,
-            get_context=lambda _w: engine.store.contexts.get(id(_w)),
-            evaluate=_eval,
-        )
+        q.flush(engine)
         # Running animation without force → skipped
         assert evaluated == []
     finally:

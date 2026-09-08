@@ -6,7 +6,7 @@ from qt_css_engine.matching.compiler import CompiledSegment, WidgetIdentity, att
 from qt_css_engine.matching.index import StyleIndex
 from qt_css_engine.qt_compat.QtCore import QObject
 from qt_css_engine.qt_compat.QtWidgets import QWidget
-from qt_css_engine.types import WidgetContext
+from qt_css_engine.state.widget_state import WidgetState
 
 if TYPE_CHECKING:
     from qt_css_engine.css.model import StyleRule
@@ -170,7 +170,7 @@ class RuleMatcher:
         raw: str = widget.property("class") or ""
         return WidgetIdentity(type(widget).__name__, widget.objectName(), frozenset(raw.split()))
 
-    def should_evaluate(self, widget: QWidget, ctx: WidgetContext | None) -> bool:
+    def should_evaluate(self, widget: QWidget, ctx: WidgetState | None) -> bool:
         if bool(ctx and ctx.active_animations):
             return True
         if self.index.quick.ids and widget.objectName() in self.index.quick.ids:

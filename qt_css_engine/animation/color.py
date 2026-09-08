@@ -7,9 +7,9 @@ from qt_css_engine.qt_compat import is_qobject_alive
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QObject, QVariantAnimation
 from qt_css_engine.qt_compat.QtGui import QColor
 from qt_css_engine.qt_compat.QtWidgets import QWidget
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.effects import update_shadow_ancestor
 from qt_css_engine.style.writer import scoped_anim_style
-from qt_css_engine.types import WidgetContext
 from qt_css_engine.utils.color import lerp_oklab_premul, parse_color, to_oklab_premul
 
 
@@ -22,8 +22,8 @@ class ColorAnimation(StepsReversalMixin, QObject):
         duration_ms: int,
         easing_curve: QEasingCurve | QEasingCurve.Type,
         parent: QObject | None = None,
-        ctx: WidgetContext | None = None,
-        style_flush_callback: Callable[[QWidget, WidgetContext], None] | None = None,
+        ctx: WidgetState | None = None,
+        style_flush_callback: Callable[[QWidget, WidgetState], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.widget = widget

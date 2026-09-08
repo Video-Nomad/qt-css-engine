@@ -6,15 +6,13 @@ from qt_css_engine.animation.callbacks import next_clicked_gen
 from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QTimer
 from qt_css_engine.qt_compat.QtWidgets import QWidget
-from qt_css_engine.types import WidgetContext
+from qt_css_engine.state.widget_state import WidgetState
 
 if TYPE_CHECKING:
     from qt_css_engine.engine.transition_engine import TransitionEngine
 
 
-def prepare_clicked(
-    engine: TransitionEngine, widget: QWidget, ctx: WidgetContext, updated: set[str]
-) -> EvaluationCause:
+def prepare_clicked(engine: TransitionEngine, widget: QWidget, ctx: WidgetState, updated: set[str]) -> EvaluationCause:
     """Add :clicked tracking when matching rules exist; return the cause to evaluate with."""
     if ":clicked" in ctx.active_pseudos:
         return EvaluationCause.PSEUDO_STATE
@@ -29,7 +27,7 @@ def prepare_clicked(
     return EvaluationCause.CLICKED_ACTIVATION
 
 
-def finish_clicked_activation(engine: TransitionEngine, widget: QWidget, ctx: WidgetContext) -> None:
+def finish_clicked_activation(engine: TransitionEngine, widget: QWidget, ctx: WidgetState) -> None:
     """Prune snapped clicked props; deactivate immediately when nothing is running."""
     ctx.clicked_anim_props = {
         p

@@ -20,8 +20,8 @@ from qt_css_engine.qt_compat.QtWidgets import QAbstractButton, QWidget
 from qt_css_engine.state.pseudo import PseudoMachine
 from qt_css_engine.state.store import WidgetStore
 from qt_css_engine.state.suppress import is_suppressed
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.writer import StyleWriter
-from qt_css_engine.types import WidgetContext
 from qt_css_engine.utils.qt_helpers import safe_disconnect
 
 if TYPE_CHECKING:
@@ -146,7 +146,7 @@ class TransitionEngine(QObject):
             timer.deleteLater()
         self._animations_enabled = True
 
-    def get_context(self, widget: QWidget) -> WidgetContext:
+    def get_context(self, widget: QWidget) -> WidgetState:
         """Get or create the context for a widget via the store."""
         ctx = self.store.get(widget)
         if ctx is None:
@@ -202,7 +202,7 @@ class TransitionEngine(QObject):
         self.queue_polish_evaluation(widget, force=True)
 
     @staticmethod
-    def _has_running_animation(ctx: WidgetContext) -> bool:
+    def _has_running_animation(ctx: WidgetState) -> bool:
         """Return True while any registered animation is actively transitioning."""
         return any(
             anim_obj.anim.state() == QAbstractAnimation.State.Running for anim_obj in ctx.active_animations.values()
@@ -214,12 +214,7 @@ class TransitionEngine(QObject):
 
     def _flush_polish_queue(self) -> None:
         """Drain the deferred Polish evaluation queue after a burst completes."""
-        self.polish.flush(
-            ensure_wa_hover=self.ensure_wa_hover,
-            seed_active_pseudo=self.seed_active_pseudo,
-            get_context=self.store.get,
-            evaluate=lambda w, cause: self.evaluate_widget_state(w, cause=cause),
-        )
+        self.polish.flush(self)
 
     def on_class_change(self, widget: QWidget) -> None:
         """Handle class property change — snapshot size, unpolish/polish, and kick off animations."""
@@ -247,10 +242,10 @@ class TransitionEngine(QObject):
         """Clear stuck :hover/:pressed/:active states when the window loses focus."""
         window_handler.handle_window_deactivate(self, widget, clear_active=clear_active)
 
-    def prepare_clicked(self, widget: QWidget, ctx: WidgetContext, updated: set[str]) -> EvaluationCause:
+    def prepare_clicked(self, widget: QWidget, ctx: WidgetState, updated: set[str]) -> EvaluationCause:
         return clicked_handler.prepare_clicked(self, widget, ctx, updated)
 
-    def finish_clicked_activation(self, widget: QWidget, ctx: WidgetContext) -> None:
+    def finish_clicked_activation(self, widget: QWidget, ctx: WidgetState) -> None:
         clicked_handler.finish_clicked_activation(self, widget, ctx)
 
     def deactivate_clicked(self, widget: QWidget, wid: int, gen: int) -> None:

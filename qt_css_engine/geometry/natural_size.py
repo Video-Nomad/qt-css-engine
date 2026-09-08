@@ -2,8 +2,8 @@
 
 from qt_css_engine.geometry.box_model import content_box_px
 from qt_css_engine.qt_compat.QtWidgets import QWidget
-from qt_css_engine.state.suppress import suppress
-from qt_css_engine.types import InternalWriteReason, WidgetContext
+from qt_css_engine.state.suppress import InternalWriteReason, suppress
+from qt_css_engine.state.widget_state import WidgetState
 
 
 def get_preferred_size_fallback(widget: QWidget, base_props: dict[str, str], prop: str) -> str:
@@ -14,7 +14,7 @@ def get_preferred_size_fallback(widget: QWidget, base_props: dict[str, str], pro
 
 def get_natural_size(
     widget: QWidget,
-    ctx: WidgetContext,
+    ctx: WidgetState,
     base_props: dict[str, str],
     prop: str,
     current_raw: str | None = None,

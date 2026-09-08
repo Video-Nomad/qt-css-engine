@@ -2,12 +2,20 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from enum import Enum, auto
 
-from qt_css_engine.types import InternalWriteReason, WidgetContext
+from qt_css_engine.state.widget_state import WidgetState
+
+
+class InternalWriteReason(Enum):
+    """Why the engine is temporarily suppressing event evaluation during internal mutations."""
+
+    CLASS_CHANGE = auto()
+    MEASURE = auto()
 
 
 @contextmanager
-def suppress(ctx: WidgetContext, reason: InternalWriteReason) -> Generator[None]:
+def suppress(ctx: WidgetState, reason: InternalWriteReason) -> Generator[None]:
     ctx.internal_write_depth += 1
     prev_reason = ctx.internal_write_reason
     ctx.internal_write_reason = reason
@@ -21,5 +29,5 @@ def suppress(ctx: WidgetContext, reason: InternalWriteReason) -> Generator[None]
             ctx.internal_write_reason = prev_reason
 
 
-def is_suppressed(ctx: WidgetContext | None) -> bool:
+def is_suppressed(ctx: WidgetState | None) -> bool:
     return bool(ctx and ctx.internal_write_depth > 0)

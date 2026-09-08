@@ -24,7 +24,7 @@ from pytestqt.qtbot import QtBot
 from qt_css_engine import TransitionEngine
 from qt_css_engine.animation.numeric import GenericPropertyAnimation
 from qt_css_engine.css.parser import extract_rules
-from qt_css_engine.engine.evaluation import EvaluationCause
+from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedRuleState
 from qt_css_engine.engine.evaluator import Evaluation
 from qt_css_engine.geometry.box_model import content_box_px
 from qt_css_engine.geometry.natural_size import get_preferred_size_fallback
@@ -39,7 +39,7 @@ from qt_css_engine.qt_compat.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qt_css_engine.types import InternalWriteReason, ResolvedRuleState
+from qt_css_engine.state.suppress import InternalWriteReason
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -761,9 +761,9 @@ def test_clean_on_finish_removes_inline_constraint(_app: QApplication, qtbot: Qt
     widget = QWidget()
     ctx_props: dict[str, str] = {}
 
-    from qt_css_engine.types import WidgetContext
+    from qt_css_engine.state.widget_state import WidgetState
 
-    ctx = WidgetContext()
+    ctx = WidgetState()
     ctx.css_anim_props = ctx_props
 
     anim = GenericPropertyAnimation(widget, "width", 100.0, 30, QEasingCurve.Type.Linear, ctx=ctx)

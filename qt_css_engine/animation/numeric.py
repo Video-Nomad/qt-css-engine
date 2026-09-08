@@ -8,9 +8,9 @@ from qt_css_engine.geometry.clamp import clamp_border_radius
 from qt_css_engine.qt_compat import is_qobject_alive
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QObject, QVariantAnimation
 from qt_css_engine.qt_compat.QtWidgets import QWidget
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.effects import update_shadow_ancestor
 from qt_css_engine.style.writer import scoped_anim_style
-from qt_css_engine.types import WidgetContext
 from qt_css_engine.utils.parsing import parse_css_numeric
 
 
@@ -24,9 +24,9 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
         easing_curve: QEasingCurve | QEasingCurve.Type,
         parent: QObject | None = None,
         unit: str = "px",
-        ctx: WidgetContext | None = None,
+        ctx: WidgetState | None = None,
         box_props: dict[str, str] | None = None,
-        style_flush_callback: Callable[[QWidget, WidgetContext], None] | None = None,
+        style_flush_callback: Callable[[QWidget, WidgetState], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.widget = widget

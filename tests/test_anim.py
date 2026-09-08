@@ -10,11 +10,11 @@ from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
 from qt_css_engine.animation.color import ColorAnimation
+from qt_css_engine.animation.factory import Animation
 from qt_css_engine.animation.numeric import GenericPropertyAnimation
 from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.css.parser import extract_rules
-from qt_css_engine.easing import CUBIC_BEZIER_RE, STEPS_RE
 from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.geometry.clamp import clamp_border_radius
 from qt_css_engine.matching.matcher import RuleMatcher
@@ -32,16 +32,22 @@ from qt_css_engine.qt_compat.QtWidgets import (
     QWidget,
 )
 from qt_css_engine.state.pseudo import PseudoMachine
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.effects import apply_opacity_to_widget, apply_shadow_to_widget
-from qt_css_engine.types import Animation, ShadowParams, WidgetContext
 from qt_css_engine.utils.color import (
+    ShadowParams,
     interpolate_oklab,
     lerp_shadow,
     parse_box_shadow,
     parse_color,
     shadow_as_transparent,
 )
-from qt_css_engine.utils.easing import make_cubic_bezier_curve, make_steps_curve
+from qt_css_engine.utils.easing import (
+    CUBIC_BEZIER_RE,
+    STEPS_RE,
+    make_cubic_bezier_curve,
+    make_steps_curve,
+)
 from qt_css_engine.utils.parsing import parse_css_val
 
 # ---------------------------------------------------------------------------
@@ -1300,7 +1306,7 @@ def test_box_shadow_handle_snap_and_tick(_app: QApplication) -> None:
 
 def test_generic_property_animation(_app: QApplication) -> None:
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(widget, "padding-top", 10.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
 
     # Check start
@@ -1325,7 +1331,7 @@ def test_generic_property_animation(_app: QApplication) -> None:
 def test_generic_border_radius_animation_clamped_to_half_min_side(_app: QApplication) -> None:
     widget = QWidget()
     widget.resize(20, 10)
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(widget, "border-top-left-radius", 0.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
 
     anim.set_target("20px")
@@ -1346,7 +1352,7 @@ def test_generic_border_radius_animation_clamped_to_half_min_side(_app: QApplica
 def test_generic_border_radius_steps_reverse_keeps_qvariant_endpoints_float(_app: QApplication) -> None:
     widget = QWidget()
     widget.resize(100, 100)
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(
         widget,
         "border-bottom-left-radius",
@@ -1371,7 +1377,7 @@ def test_generic_border_radius_steps_reverse_keeps_qvariant_endpoints_float(_app
 def test_color_animation_steps_reverse_retraces_without_jump(_app: QApplication) -> None:
     """A discrete color transition must preserve its visible step when reversed mid-flight."""
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = ColorAnimation(
         widget,
         "background-color",
@@ -1433,7 +1439,7 @@ def test_box_shadow_animation_steps_reverse_retraces_without_jump(_app: QApplica
 def test_generic_border_radius_uses_size_hint_when_geometry_unset(_app: QApplication) -> None:
     widget = FixedHintWidget()
     widget.resize(0, 0)
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(widget, "border-top-left-radius", 0.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
 
     anim.set_target("20px")
@@ -2646,7 +2652,7 @@ def test_generic_animation_negative_clamped_in_stylesheet(_app: QApplication) ->
     The stylesheet value must be clamped to 0 while current_val stays unclamped.
     """
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(widget, "min-width", 10.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
     anim.set_target("5px")
 
@@ -2663,7 +2669,7 @@ def test_generic_animation_negative_clamped_in_stylesheet(_app: QApplication) ->
 def test_generic_animation_snap_clamps_non_negative_prop(_app: QApplication) -> None:
     """Snap paths must clamp non-negative props the same way animation ticks do."""
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(widget, "min-width", 10.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
 
     anim.snap_to("-5px")
@@ -2678,7 +2684,7 @@ def test_generic_animation_snap_clamps_non_negative_prop(_app: QApplication) -> 
 def test_generic_animation_non_negative_prop_zero_boundary(_app: QApplication) -> None:
     """Exactly 0 is allowed for non-negative props (boundary check)."""
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(widget, "border-top-width", 5.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
     anim.set_target("0px")
 
@@ -2693,7 +2699,7 @@ def test_generic_animation_non_negative_prop_zero_boundary(_app: QApplication) -
 def test_generic_animation_margin_allows_negative(_app: QApplication) -> None:
     """margin-top is NOT in _NON_NEGATIVE_PROPS — negative values must pass through."""
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(widget, "margin-top", 10.0, 100, QEasingCurve.Type.Linear, ctx=ctx)
     anim.set_target("0px")
 
@@ -2712,7 +2718,7 @@ def test_generic_animation_margin_allows_negative(_app: QApplication) -> None:
 
 def test_color_animation_set_target_skips_restart_when_already_running_to_same_target(_app: QApplication) -> None:
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = ColorAnimation(widget, "background-color", "red", 500, QEasingCurve.Type.Linear, ctx=ctx)
     anim.set_target("blue")
     assert anim.anim.state() == anim.anim.State.Running
@@ -2731,7 +2737,7 @@ def test_color_animation_set_target_skips_restart_when_already_running_to_same_t
 
 def test_generic_animation_set_target_skips_restart_when_already_running_to_same_target(_app: QApplication) -> None:
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(widget, "width", 10.0, 500, QEasingCurve.Type.Linear, ctx=ctx)
     anim.set_target("200px")
     assert anim.anim.state() == anim.anim.State.Running
@@ -2750,7 +2756,7 @@ def test_generic_animation_set_target_skips_restart_when_already_running_to_same
 
 def test_update_spec_changes_duration_on_color_animation(_app: QApplication) -> None:
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = ColorAnimation(widget, "background-color", "steelblue", 1000, QEasingCurve.Type.Linear, ctx=ctx)
     anim.set_target("royalblue")
     assert anim.anim.duration() == 1000
@@ -2763,7 +2769,7 @@ def test_update_spec_changes_duration_on_color_animation(_app: QApplication) -> 
 
 def test_update_spec_changes_duration_on_generic_animation(_app: QApplication) -> None:
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(widget, "padding-top", 10.0, 800, QEasingCurve.Type.Linear, ctx=ctx)
     anim.set_target("20px")
     assert anim.anim.duration() == 800
@@ -2776,7 +2782,7 @@ def test_update_spec_changes_duration_on_generic_animation(_app: QApplication) -
 
 def test_update_spec_changes_easing_curve(_app: QApplication) -> None:
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(widget, "padding-top", 0.0, 300, QEasingCurve.Type.Linear, ctx=ctx)
     assert anim.anim.easingCurve().type() == QEasingCurve.Type.Linear
 

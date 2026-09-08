@@ -3,7 +3,7 @@
 from collections.abc import Callable
 
 from qt_css_engine.qt_compat.QtCore import QObject, QTimer
-from qt_css_engine.types import WidgetContext
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.utils.qt_helpers import safe_disconnect
 
 
@@ -11,7 +11,7 @@ class DelayScheduler(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
 
-    def schedule(self, ctx: WidgetContext, prop: str, delay_ms: int, callback: Callable[[], None]) -> None:
+    def schedule(self, ctx: WidgetState, prop: str, delay_ms: int, callback: Callable[[], None]) -> None:
         self.cancel(ctx, prop)
         timer = QTimer(self)
         timer.setSingleShot(True)
@@ -19,7 +19,7 @@ class DelayScheduler(QObject):
         ctx.pending_delays[prop] = timer
         timer.start(delay_ms)
 
-    def cancel(self, ctx: WidgetContext, prop: str) -> None:
+    def cancel(self, ctx: WidgetState, prop: str) -> None:
         timer = ctx.pending_delays.pop(prop, None)
         if timer is not None:
             try:
@@ -29,6 +29,6 @@ class DelayScheduler(QObject):
             except RuntimeError:
                 pass
 
-    def cancel_all(self, ctx: WidgetContext) -> None:
+    def cancel_all(self, ctx: WidgetState) -> None:
         for prop in list(ctx.pending_delays):
             self.cancel(ctx, prop)

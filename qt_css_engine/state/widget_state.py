@@ -1,9 +1,8 @@
 """Widget state composition — canonical per-widget state.
 
 WidgetState owns cohesive sub-states (pseudo/anim/style/delay/geometry) plus the
-internal-write guard. Flat WidgetContext attribute names are preserved as properties
-so existing engine/animation/tests code keeps working while new code can use the
-composed ``pseudos/anims/style/delays/geometry`` objects directly.
+internal-write guard. Flat attribute names are preserved as properties while new
+code can use the composed ``pseudos/anims/style/delays/geometry`` objects directly.
 """
 
 from collections.abc import Callable
@@ -11,8 +10,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from qt_css_engine.animation.factory import Animation
     from qt_css_engine.qt_compat.QtCore import QTimer
-    from qt_css_engine.types import Animation, InternalWriteReason
+    from qt_css_engine.state.suppress import InternalWriteReason
 
 
 @dataclass

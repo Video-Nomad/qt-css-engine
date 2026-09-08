@@ -6,9 +6,8 @@ from typing import TYPE_CHECKING
 from qt_css_engine.animation.callbacks import next_class_gen
 from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.qt_compat.QtWidgets import QWidget
-from qt_css_engine.state.suppress import suppress
+from qt_css_engine.state.suppress import InternalWriteReason, suppress
 from qt_css_engine.style.effects import update_shadow_ancestor
-from qt_css_engine.types import InternalWriteReason
 
 if TYPE_CHECKING:
     from qt_css_engine.engine.transition_engine import TransitionEngine

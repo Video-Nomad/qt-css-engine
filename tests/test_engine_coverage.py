@@ -29,15 +29,15 @@ from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
 from qt_css_engine.animation.color import ColorAnimation
+from qt_css_engine.animation.factory import Animation
 from qt_css_engine.animation.numeric import GenericPropertyAnimation
 from qt_css_engine.css.parser import extract_rules
-from qt_css_engine.easing import resolve_easing_curve
-from qt_css_engine.engine.evaluation import EvaluationCause
+from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedRuleState
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QSize, Qt, QTimer
 from qt_css_engine.qt_compat.QtGui import QColor
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QFrame, QPushButton, QVBoxLayout, QWidget
-from qt_css_engine.types import Animation, ResolvedRuleState
+from qt_css_engine.utils.easing import resolve_easing_curve
 
 # ---------------------------------------------------------------------------
 # Helpers (mirrors test_anim.py)

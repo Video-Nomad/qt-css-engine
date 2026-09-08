@@ -11,7 +11,7 @@ from qt_css_engine.animation.factory import create_animator
 from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.qt_compat import qt_delete
-from qt_css_engine.qt_compat.QtCore import QEasingCurve
+from qt_css_engine.qt_compat.QtCore import QEasingCurve, Qt
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QFrame, QLabel, QWidget
 from qt_css_engine.utils.qt_helpers import safe_disconnect
 
@@ -104,9 +104,9 @@ def test_safe_disconnect_double_disconnect_emits_no_warning(
     widget = QWidget()
     try:
         from qt_css_engine.animation.numeric import GenericPropertyAnimation
-        from qt_css_engine.types import WidgetContext
+        from qt_css_engine.state.widget_state import WidgetState
 
-        anim = GenericPropertyAnimation(widget, "width", 10.0, 200, QEasingCurve.Type.Linear, ctx=WidgetContext())
+        anim = GenericPropertyAnimation(widget, "width", 10.0, 200, QEasingCurve.Type.Linear, ctx=WidgetState())
         cb = lambda: None
         anim.anim.finished.connect(cb)
         safe_disconnect(anim.anim.finished, cb)
@@ -251,9 +251,8 @@ def test_post_clean_noop_skips_natural_measurement(_app: QApplication, monkeypat
     updatesEnabled toggling) only for _is_natural_noop to discard it. That
     shared-parent thrash at finish time paints as a one-frame ghost.
     """
-    from qt_css_engine.engine.evaluation import EvaluationCause
+    from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedRuleState
     from qt_css_engine.engine.evaluator import Evaluation
-    from qt_css_engine.types import ResolvedRuleState
 
     engine = make_engine(".x { transition: min-width 300ms; }")
     widget = QWidget()
@@ -302,6 +301,7 @@ def test_hidden_ancestor_class_change_deferred_to_polish(_app: QApplication) -> 
     """)
     _app.installEventFilter(engine)
     parent = QFrame()
+    parent.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
     try:
         assert not parent.isVisible()
         parent.setProperty("class", "outer")

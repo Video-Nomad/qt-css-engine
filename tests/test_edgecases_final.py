@@ -10,14 +10,14 @@ from qt_css_engine.animation.numeric import GenericPropertyAnimation
 from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.css.model import StyleRule
 from qt_css_engine.css.parser import extract_rules
-from qt_css_engine.engine.evaluation import EvaluationCause
+from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedProperty, ResolvedRuleState
 from qt_css_engine.engine.evaluator import Evaluation
 from qt_css_engine.matching.matcher import RuleMatcher
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QEasingCurve
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QWidget
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.writer import StyleWriter
-from qt_css_engine.types import ResolvedProperty, ResolvedRuleState, WidgetContext
 
 
 def make_engine(css: str) -> TransitionEngine:
@@ -98,7 +98,7 @@ def test_delay_fire_cancel_runtimeerror_swallowed(_app: QApplication, monkeypatc
         ctx = engine.get_context(widget)
         captured: dict[str, object] = {}
 
-        def _capture(_ctx: WidgetContext, _prop: str, _delay_ms: int, _cb: object) -> None:
+        def _capture(_ctx: WidgetState, _prop: str, _delay_ms: int, _cb: object) -> None:
             captured["cb"] = _cb
 
         monkeypatch.setattr(engine.delays, "schedule", _capture)
@@ -111,7 +111,7 @@ def test_delay_fire_cancel_runtimeerror_swallowed(_app: QApplication, monkeypatc
         engine.store.contexts.pop(wid, None)
         engine.store.widgets.pop(wid, None)
 
-        def _boom(_c: WidgetContext, _p: str) -> None:
+        def _boom(_c: WidgetState, _p: str) -> None:
             raise RuntimeError("timer gone")
 
         monkeypatch.setattr(engine.delays, "cancel", _boom)
@@ -131,7 +131,7 @@ def test_delay_fire_propagates_runtimeerror_swallowed(_app: QApplication, monkey
     try:
         captured: dict[str, object] = {}
 
-        def _capture(_ctx: WidgetContext, _prop: str, _delay_ms: int, _cb: object) -> None:
+        def _capture(_ctx: WidgetState, _prop: str, _delay_ms: int, _cb: object) -> None:
             captured["cb"] = _cb
 
         monkeypatch.setattr(engine.delays, "schedule", _capture)
@@ -230,7 +230,7 @@ def test_reload_collect_skips_dead_sample_handcrafted(_app: QApplication) -> Non
     from qt_css_engine.engine.handlers import reload as reload_handler
 
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     anim = GenericPropertyAnimation(widget, "width", 10.0, 200, QEasingCurve.Type.Linear, ctx=ctx)
     ctx.active_animations["width"] = anim
     wid = id(widget)
@@ -497,7 +497,7 @@ def test_matcher_descendant_chain_walks_multiple_ancestors(_app: QApplication) -
 def test_writer_deleted_widget_clears_pending(_app: QApplication) -> None:
     writer = StyleWriter(get_ctx=lambda _wid: None)
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     ctx.css_anim_props["color"] = "red"
     ctx.style_flush_pending = True
     try:
@@ -506,7 +506,7 @@ def test_writer_deleted_widget_clears_pending(_app: QApplication) -> None:
         assert ctx.style_flush_pending is False
     except RuntimeError:
         pass
-    writer2ctx = WidgetContext()
+    writer2ctx = WidgetState()
     writer2ctx.css_anim_props["color"] = "red"
     writer2ctx.style_flush_pending = True
     w2 = QWidget()

@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 
 from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.effects import apply_shadow_to_widget
-from qt_css_engine.types import WidgetContext
 from qt_css_engine.utils.qt_helpers import safe_disconnect
 
 if TYPE_CHECKING:
@@ -35,12 +35,12 @@ def on_widget_destroyed(engine: TransitionEngine, widget: object) -> None:
     stop_animations(engine, ctx)
 
 
-def cancel_all_pending_delays(engine: TransitionEngine, ctx: WidgetContext) -> None:
+def cancel_all_pending_delays(engine: TransitionEngine, ctx: WidgetState) -> None:
     """Cancel every delayed transition currently held by a widget."""
     engine.delays.cancel_all(ctx)
 
 
-def disconnect_finished_callbacks(ctx: WidgetContext, callbacks: dict[str, Callable[[], None]]) -> None:
+def disconnect_finished_callbacks(ctx: WidgetState, callbacks: dict[str, Callable[[], None]]) -> None:
     """Disconnect callbacks held for animations that are about to be discarded."""
     for prop, callback in callbacks.items():
         anim_obj = ctx.active_animations.get(prop)
@@ -52,7 +52,7 @@ def disconnect_finished_callbacks(ctx: WidgetContext, callbacks: dict[str, Calla
     callbacks.clear()
 
 
-def stop_animations(engine: TransitionEngine, ctx: WidgetContext, *, clear_effects: bool = False) -> None:
+def stop_animations(engine: TransitionEngine, ctx: WidgetState, *, clear_effects: bool = False) -> None:
     """Stop and release all animation objects in a widget context."""
     for anim_obj in ctx.active_animations.values():
         try:

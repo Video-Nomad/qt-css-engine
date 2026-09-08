@@ -5,8 +5,7 @@ from qt_css_engine.qt_compat import is_qobject_alive
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QObject, QVariantAnimation
 from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.style.effects import apply_shadow_to_widget
-from qt_css_engine.types import ShadowParams
-from qt_css_engine.utils.color import lerp_shadow, parse_box_shadow, shadow_as_transparent
+from qt_css_engine.utils.color import ShadowParams, lerp_shadow, parse_box_shadow, shadow_as_transparent
 
 
 class BoxShadowHandle(StepsReversalMixin, QObject):

@@ -2,9 +2,21 @@
 
 import math
 import re
+from dataclasses import dataclass, field
 
 from qt_css_engine.qt_compat.QtGui import QColor
-from qt_css_engine.types import ShadowParams
+
+
+@dataclass
+class ShadowParams:
+    """Decomposed CSS box-shadow parameters used for interpolation."""
+
+    offset_x: float = 0.0
+    offset_y: float = 4.0
+    blur: float = 8.0
+    spread: float = 0.0
+    color: QColor = field(default_factory=lambda: QColor(0, 0, 0, 80))
+
 
 _RGB_RE = re.compile(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)")
 _HSL_RE = re.compile(r"hsla?\(\s*(\d+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%(?:\s*,\s*([\d.]+))?\s*\)")

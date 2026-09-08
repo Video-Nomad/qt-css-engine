@@ -8,14 +8,14 @@ from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.engine.handlers import lifecycle as lifecycle_handler
 from qt_css_engine.qt_compat.QtCore import QTimer
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QWidget
-from qt_css_engine.types import WidgetContext
+from qt_css_engine.state.widget_state import WidgetState
 
 if TYPE_CHECKING:
     from qt_css_engine.css.model import StyleRule
     from qt_css_engine.engine.transition_engine import TransitionEngine
 
 
-def collect_reload_widgets(contexts: dict[int, WidgetContext]) -> tuple[set[QWidget], set[int]]:
+def collect_reload_widgets(contexts: dict[int, WidgetState]) -> tuple[set[QWidget], set[int]]:
     """Return live widgets with animations plus ids owning inline styles."""
     animated_widgets: set[QWidget] = set()
     inline_widget_ids: set[int] = set()
@@ -52,7 +52,7 @@ def reload_rules(engine: TransitionEngine, rules: list[StyleRule]) -> None:
     )
 
 
-def reset_context_for_reload(engine: TransitionEngine, ctx: WidgetContext) -> None:
+def reset_context_for_reload(engine: TransitionEngine, ctx: WidgetState) -> None:
     """Discard transient animation state before the new rule set is installed."""
     lifecycle_handler.cancel_all_pending_delays(engine, ctx)
     lifecycle_handler.disconnect_finished_callbacks(ctx, ctx.class_anim_callbacks)

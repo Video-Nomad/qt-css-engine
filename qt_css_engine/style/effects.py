@@ -1,7 +1,7 @@
 """Graphics-effect helpers — opacity / shadow slot arbitration."""
 
 from qt_css_engine.qt_compat.QtWidgets import QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QWidget
-from qt_css_engine.types import ShadowParams
+from qt_css_engine.utils.color import ShadowParams
 
 
 def apply_opacity_to_widget(widget: QWidget, value: float, priority: str) -> None:

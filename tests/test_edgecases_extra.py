@@ -21,12 +21,13 @@ from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
 from qt_css_engine.animation.color import ColorAnimation
+from qt_css_engine.animation.factory import Animation
 from qt_css_engine.animation.numeric import GenericPropertyAnimation
 from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.css.model import StyleRule
 from qt_css_engine.css.parser import extract_rules
-from qt_css_engine.engine.evaluation import EvaluationCause
+from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedRuleState
 from qt_css_engine.engine.evaluator import Evaluation
 from qt_css_engine.geometry.box_model import total_border_px
 from qt_css_engine.matching.matcher import RuleMatcher
@@ -37,8 +38,8 @@ from qt_css_engine.qt_compat.QtWidgets import (
     QPushButton,
     QWidget,
 )
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.writer import StyleWriter
-from qt_css_engine.types import Animation, ResolvedRuleState, WidgetContext
 
 
 def make_engine(css: str) -> TransitionEngine:
@@ -81,7 +82,7 @@ def test_color_tick_with_alpha_hits_shadow_ancestor_branch(_app: QApplication) -
 def test_numeric_finished_runtimeerror_swallowed(_app: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
     widget = QWidget()
     widget.resize(100, 100)
-    ctx = WidgetContext()
+    ctx = WidgetState()
     try:
         anim = GenericPropertyAnimation(widget, "border-top-left-radius", 5.0, 200, QEasingCurve.Type.Linear, ctx=ctx)
         anim._target_box_size = (80.0, 80.0)
@@ -101,7 +102,7 @@ def test_numeric_finished_clean_flush_runtimeerror_swallowed(
     _app: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     ctx.css_anim_props["width"] = "10.000px"
     try:
         anim = GenericPropertyAnimation(widget, "width", 10.0, 200, QEasingCurve.Type.Linear, ctx=ctx)
@@ -219,7 +220,7 @@ def test_evaluate_returns_early_when_can_skip_mocked(_app: QApplication, monkeyp
     widget.setProperty("class", "box")
     try:
 
-        def _always_skip(_w: QWidget, _c: WidgetContext, _cause: EvaluationCause) -> bool:
+        def _always_skip(_w: QWidget, _c: WidgetState, _cause: EvaluationCause) -> bool:
             return True
 
         monkeypatch.setattr(engine.evaluator, "can_skip_initial_evaluation", _always_skip)
@@ -311,7 +312,7 @@ def test_snap_to_target_unsupported_effect_returns_false(_app: QApplication) -> 
     try:
         ctx = engine.get_context(widget)
         ev = Evaluation(widget, ctx, ResolvedRuleState(), EvaluationCause.POLISH)
-        from qt_css_engine.types import ResolvedProperty
+        from qt_css_engine.engine.evaluation import ResolvedProperty
 
         resolved = ResolvedProperty(animation=None, current="0.5", target="0.8", is_natural_target=False, spec=None)
         # opacity with no anim but mocked factory returning None → returns False
@@ -554,7 +555,7 @@ def test_window_deactivate_tolerates_dead_child(_app: QApplication) -> None:
 
 
 def test_on_resize_suppressed_noop(_app: QApplication) -> None:
-    from qt_css_engine.types import InternalWriteReason
+    from qt_css_engine.state.suppress import InternalWriteReason
 
     engine = make_engine(".box { border-radius: 8px; }")
     widget = QWidget()
@@ -677,7 +678,7 @@ def test_writer_bind_and_deleted_flush(_app: QApplication, qtbot: QtBot) -> None
     writer.bind(lambda _wid: None)
     assert writer._get_ctx is not None
     widget = QWidget()
-    ctx = WidgetContext()
+    ctx = WidgetState()
     ctx.css_anim_props["color"] = "red"
     ctx.style_flush_pending = True
     wid = id(widget)

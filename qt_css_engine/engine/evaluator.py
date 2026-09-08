@@ -17,22 +17,22 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from qt_css_engine.animation.color import ColorAnimation
-from qt_css_engine.animation.factory import create_animator
+from qt_css_engine.animation.factory import Animation, create_animator
 from qt_css_engine.animation.numeric import GenericPropertyAnimation
 from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.constants import BORDER_RADIUS_PROPS, EFFECT_PROPS, SIZE_PROPS
-from qt_css_engine.easing import resolve_easing_curve
-from qt_css_engine.engine.evaluation import EvaluationCause
+from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedProperty, ResolvedRuleState
 from qt_css_engine.geometry.box_model import content_box_px
 from qt_css_engine.geometry.clamp import clamp_border_radius, target_border_radius_box_size
 from qt_css_engine.geometry.natural_size import get_natural_size, get_preferred_size_fallback
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve
 from qt_css_engine.qt_compat.QtWidgets import QWidget
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.cursor import apply_cursor as apply_cursor_style
 from qt_css_engine.style.effects import apply_shadow_to_widget
-from qt_css_engine.types import Animation, ResolvedProperty, ResolvedRuleState, WidgetContext
 from qt_css_engine.utils.color import parse_color
+from qt_css_engine.utils.easing import resolve_easing_curve
 from qt_css_engine.utils.parsing import parse_css_numeric
 from qt_css_engine.utils.qt_helpers import safe_disconnect
 
@@ -48,7 +48,7 @@ class Evaluation:
     """Single evaluation pass — the unit of work pushed through the pipeline."""
 
     widget: QWidget
-    ctx: WidgetContext
+    ctx: WidgetState
     state: ResolvedRuleState
     cause: EvaluationCause
 
@@ -97,7 +97,7 @@ class WidgetEvaluator:
         if self.apply_prop(ev, prop):
             self._engine.writer.flush_now(widget, ctx)
 
-    def _collect_state(self, widget: QWidget, ctx: WidgetContext) -> ResolvedRuleState:
+    def _collect_state(self, widget: QWidget, ctx: WidgetState) -> ResolvedRuleState:
         """Collect cascade state and publish target box props for geometry helpers."""
         state = self.collect_rule_state(widget, ctx)
         ctx.style_box_props = dict(state.target_props)
@@ -115,7 +115,7 @@ class WidgetEvaluator:
     # Cascade
     # ------------------------------------------------------------------
 
-    def can_skip_initial_evaluation(self, widget: QWidget, ctx: WidgetContext, cause: EvaluationCause) -> bool:
+    def can_skip_initial_evaluation(self, widget: QWidget, ctx: WidgetState, cause: EvaluationCause) -> bool:
         """Skip base-state Polish work when no rule needs engine-managed behavior."""
         if not cause.snaps_transitions or ctx.css_anim_props or ctx.active_animations:
             return False
@@ -124,7 +124,7 @@ class WidgetEvaluator:
             for rule in self._engine.matcher.matching_rules(widget)
         )
 
-    def collect_rule_state(self, widget: QWidget, ctx: WidgetContext) -> ResolvedRuleState:
+    def collect_rule_state(self, widget: QWidget, ctx: WidgetState) -> ResolvedRuleState:
         return self._engine.cascade.collect(widget, ctx)
 
     # ------------------------------------------------------------------
@@ -188,7 +188,7 @@ class WidgetEvaluator:
         )
 
     def resolve_current_raw(
-        self, widget: QWidget, ctx: WidgetContext, prop: str, base_props: dict[str, str], base_raw: str
+        self, widget: QWidget, ctx: WidgetState, prop: str, base_props: dict[str, str], base_raw: str
     ) -> str:
         """Resolve the CSS value to use as the animation start point."""
         if (inline := ctx.css_anim_props.get(prop)) is not None:
@@ -199,7 +199,7 @@ class WidgetEvaluator:
         return f"{actual}px" if actual > 0 else base_raw
 
     @staticmethod
-    def _raw_size_px(widget: QWidget, ctx: WidgetContext, prop: str) -> int:
+    def _raw_size_px(widget: QWidget, ctx: WidgetState, prop: str) -> int:
         """Pre-polish snapshot wins during class changes; otherwise read the live widget size."""
         pre_polish_size = ctx.pre_polish_size
         if "width" in prop:
@@ -240,7 +240,7 @@ class WidgetEvaluator:
         return f"{anim_obj.natural_val:.3f}{anim_obj.unit}"
 
     @staticmethod
-    def _is_natural_noop(ctx: WidgetContext, prop: str, resolved: ResolvedProperty) -> bool:
+    def _is_natural_noop(ctx: WidgetState, prop: str, resolved: ResolvedProperty) -> bool:
         """Qt already lays out natural sizes itself; without an inline constraint there is nothing to do."""
         if not resolved.is_natural_target or prop in ctx.css_anim_props:
             return False
@@ -333,7 +333,7 @@ class WidgetEvaluator:
         if ev.cause.is_clicked_driven and prop in ev.ctx.clicked_anim_props:
             self._wire_clicked_callback(ev.widget, ev.ctx, prop, animation)
 
-    def _wire_class_callback(self, widget: QWidget, ctx: WidgetContext, prop: str, anim_obj: Animation) -> None:
+    def _wire_class_callback(self, widget: QWidget, ctx: WidgetState, prop: str, anim_obj: Animation) -> None:
         """Track class-driven anims so their finish re-evaluates any queued class state."""
         ctx.class_anim_props.add(prop)
         gen = ctx.class_anim_gen
@@ -347,7 +347,7 @@ class WidgetEvaluator:
 
         self._replace_finished_callback(anim_obj, prop, ctx.class_anim_callbacks, _on_done)
 
-    def _wire_clicked_callback(self, widget: QWidget, ctx: WidgetContext, prop: str, anim_obj: Animation) -> None:
+    def _wire_clicked_callback(self, widget: QWidget, ctx: WidgetState, prop: str, anim_obj: Animation) -> None:
         """Track :clicked anims so the pseudo clears once the last one finishes."""
         gen = ctx.clicked_anim_gen
         wid = id(widget)
@@ -378,7 +378,7 @@ class WidgetEvaluator:
     # Orphaned animation cleanup
     # ------------------------------------------------------------------
 
-    def cleanup_orphans(self, ctx: WidgetContext, state: ResolvedRuleState) -> bool:
+    def cleanup_orphans(self, ctx: WidgetState, state: ResolvedRuleState) -> bool:
         """Snap/stop animations for props no longer covered by any rule."""
         for prop in list(ctx.pending_delays):
             if prop not in state.animated_props:
@@ -393,7 +393,7 @@ class WidgetEvaluator:
             needs_update = True
         return needs_update
 
-    def _remove_orphan(self, ctx: WidgetContext, state: ResolvedRuleState, prop: str, orphan: Animation) -> bool:
+    def _remove_orphan(self, ctx: WidgetState, state: ResolvedRuleState, prop: str, orphan: Animation) -> bool:
         """Settle and release one animation whose property is no longer engine-managed."""
         ctx.class_anim_props.discard(prop)
         if (old_callback := ctx.class_anim_callbacks.pop(prop, None)) is not None:
@@ -424,7 +424,7 @@ class WidgetEvaluator:
         return snap_target, is_natural_snap
 
     def _snap_orphan(
-        self, ctx: WidgetContext, prop: str, orphan: Animation, snap_target: str, is_natural_snap: bool
+        self, ctx: WidgetState, prop: str, orphan: Animation, snap_target: str, is_natural_snap: bool
     ) -> None:
         """Move an orphaned animation to its final base or natural value."""
         if isinstance(orphan, ColorAnimation) and not self._is_interpolable_color(snap_target):
@@ -447,7 +447,7 @@ class WidgetEvaluator:
                 pass
 
     @staticmethod
-    def _evict_stale(ctx: WidgetContext, state: ResolvedRuleState) -> bool:
+    def _evict_stale(ctx: WidgetState, state: ResolvedRuleState) -> bool:
         """Remove inline values that have neither a matching rule nor a live animation."""
         stale_props = {
             prop
@@ -484,7 +484,7 @@ class WidgetEvaluator:
         return not self._is_interpolable_color(current_raw) or not self._is_interpolable_color(target_raw)
 
     def _snap_uninterpolable_color(
-        self, ctx: WidgetContext, prop: str, anim_obj: Animation | None, target_raw: str
+        self, ctx: WidgetState, prop: str, anim_obj: Animation | None, target_raw: str
     ) -> bool:
         """Snap a color prop when either endpoint is not a solid color."""
         if isinstance(anim_obj, ColorAnimation):
@@ -500,7 +500,7 @@ class WidgetEvaluator:
             return True
         return False
 
-    def _schedule_delay(self, widget: QWidget, ctx: WidgetContext, prop: str, delay_ms: int) -> None:
+    def _schedule_delay(self, widget: QWidget, ctx: WidgetState, prop: str, delay_ms: int) -> None:
         """Schedule prop's animation to start after delay_ms."""
         wid = id(widget)
 

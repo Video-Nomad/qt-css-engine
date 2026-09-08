@@ -9,8 +9,10 @@ from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.constants import SUPPORTED_NUMERIC_PROPS
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QObject
 from qt_css_engine.qt_compat.QtWidgets import QWidget
-from qt_css_engine.types import Animation, WidgetContext
+from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.utils.parsing import parse_css_numeric, parse_css_val
+
+Animation = ColorAnimation | OpacityAnimation | GenericPropertyAnimation | BoxShadowHandle
 
 
 def create_animator(
@@ -19,9 +21,9 @@ def create_animator(
     initial_raw: str,
     duration_ms: int,
     curve: QEasingCurve | QEasingCurve.Type,
-    ctx: WidgetContext | None = None,
+    ctx: WidgetState | None = None,
     box_props: dict[str, str] | None = None,
-    style_flush_callback: Callable[[QWidget, WidgetContext], None] | None = None,
+    style_flush_callback: Callable[[QWidget, WidgetState], None] | None = None,
     effect_priority: str = "opacity",
     parent: QObject | None = None,
 ) -> Animation | None:
