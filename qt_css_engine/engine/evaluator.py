@@ -37,7 +37,7 @@ from qt_css_engine.utils.parsing import parse_css_numeric
 from qt_css_engine.utils.qt_helpers import safe_disconnect
 
 if TYPE_CHECKING:
-    from qt_css_engine.css.model import TransitionSpec
+    from qt_css_engine.css.model import StyleRule, TransitionSpec
     from qt_css_engine.engine.transition_engine import TransitionEngine
 
 event_logger = logging.getLogger("qt_css_engine.event")
@@ -63,14 +63,29 @@ class WidgetEvaluator:
     # Pipeline entry points
     # ------------------------------------------------------------------
 
-    def evaluate(self, widget: QWidget, cause: EvaluationCause = EvaluationCause.DIRECT) -> None:
-        """Evaluate all animated CSS properties and start, update, or snap animations."""
-        if not self._engine.should_evaluate(widget):
+    def evaluate(
+        self, widget: QWidget, cause: EvaluationCause = EvaluationCause.DIRECT, *, rules: list[StyleRule] | None = None
+    ) -> None:
+        """Evaluate all animated CSS properties and start, update, or snap animations.
+
+        *rules* must equal matching_rules(widget); gate and lookup are skipped.
+        """
+        if rules is None and not self._engine.should_evaluate(widget):
             return
-        ctx = self._engine.get_context(widget)
+        ctx = self._engine.store.get(widget)
+        if ctx is None:
+            # No context yet: skip static widgets without allocating one.
+            if cause.snaps_transitions:
+                matched = rules if rules is not None else self._engine.matcher.matching_rules(widget)
+                if not any(
+                    rule.transitions or rule.has_effect_props or rule.has_cursor_prop or rule.has_border_radius_props
+                    for rule in matched
+                ):
+                    return
+            ctx = self._engine.get_context(widget)
         if self.can_skip_initial_evaluation(widget, ctx, cause):
             return
-        state = self._collect_state(widget, ctx)
+        state = self._collect_state(widget, ctx, rules=rules)
         saved_immediate = ctx.style_flush_immediate
         ctx.style_flush_immediate = saved_immediate or cause.is_class_driven
         try:
@@ -97,9 +112,11 @@ class WidgetEvaluator:
         if self.apply_prop(ev, prop):
             self._engine.writer.flush_now(widget, ctx)
 
-    def _collect_state(self, widget: QWidget, ctx: WidgetState) -> ResolvedRuleState:
+    def _collect_state(
+        self, widget: QWidget, ctx: WidgetState, *, rules: list[StyleRule] | None = None
+    ) -> ResolvedRuleState:
         """Collect cascade state and publish target box props for geometry helpers."""
-        state = self.collect_rule_state(widget, ctx)
+        state = self.collect_rule_state(widget, ctx, rules=rules)
         ctx.style_box_props = dict(state.target_props)
         return state
 
@@ -124,8 +141,10 @@ class WidgetEvaluator:
             for rule in self._engine.matcher.matching_rules(widget)
         )
 
-    def collect_rule_state(self, widget: QWidget, ctx: WidgetState) -> ResolvedRuleState:
-        return self._engine.cascade.collect(widget, ctx)
+    def collect_rule_state(
+        self, widget: QWidget, ctx: WidgetState, *, rules: list[StyleRule] | None = None
+    ) -> ResolvedRuleState:
+        return self._engine.cascade.collect(widget, ctx, rules=rules)
 
     # ------------------------------------------------------------------
     # Per-property decision: resolve -> snap/animate

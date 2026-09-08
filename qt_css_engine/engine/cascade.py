@@ -1,5 +1,7 @@
 """Cascade evaluation — collect base/target props, transitions, animated props."""
 
+from typing import TYPE_CHECKING
+
 from qt_css_engine.constants import BORDER_RADIUS_PROPS, EFFECT_PROPS
 from qt_css_engine.engine.evaluation import ResolvedRuleState
 from qt_css_engine.geometry.clamp import clamp_border_radius, target_border_radius_box_size
@@ -7,6 +9,9 @@ from qt_css_engine.matching.matcher import RuleMatcher
 from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.utils.parsing import parse_css_numeric
+
+if TYPE_CHECKING:
+    from qt_css_engine.css.model import StyleRule
 
 
 class CascadeEvaluator:
@@ -16,7 +21,7 @@ class CascadeEvaluator:
         self._matcher = matcher
         self._priority = pseudo_priority
 
-    def collect(self, widget: QWidget, ctx: WidgetState) -> ResolvedRuleState:
+    def collect(self, widget: QWidget, ctx: WidgetState, *, rules: list[StyleRule] | None = None) -> ResolvedRuleState:
         state = ResolvedRuleState()
         # Per-prop winners: CSS2 (specificity, order) with the engine's pseudo
         # priority kept as a tiebreak inside equal specificity so :pressed still
@@ -25,7 +30,8 @@ class CascadeEvaluator:
         target_best: dict[str, tuple[tuple[int, int, int], int, int]] = {}
         trans_best: dict[str, tuple[tuple[int, int, int], int, int]] = {}
         pseudos = ctx.active_pseudos
-        for rule in self._matcher.matching_rules(widget):
+        matched = rules if rules is not None else self._matcher.matching_rules(widget)
+        for rule in matched:
             attrs_match = self._matcher.rule_attrs_match(widget, rule) if rule.has_attrs else True
             rule_in_target = attrs_match and (not rule.pseudo_set or rule.pseudo_set <= pseudos)
             priority = sum(self._priority.get(p, 0) for p in rule.pseudo_set) if rule_in_target else -1

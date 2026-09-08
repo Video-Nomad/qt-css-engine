@@ -1637,7 +1637,7 @@ def test_polish_flush_skips_running_and_dedups(_app: QApplication, monkeypatch: 
         q.pending = False
         evaluated: list[QWidget] = []
 
-        def _spy(w: QWidget, cause: EvaluationCause = EvaluationCause.DIRECT) -> None:
+        def _spy(w: QWidget, cause: EvaluationCause = EvaluationCause.DIRECT, **_kwargs: object) -> None:
             evaluated.append(w)
 
         monkeypatch.setattr(engine, "evaluate_widget_state", _spy)
@@ -1648,3 +1648,108 @@ def test_polish_flush_skips_running_and_dedups(_app: QApplication, monkeypatch: 
         assert evaluated == []
     finally:
         destroy(widget)
+
+
+# ---------------------------------------------------------------------------
+# invalidation + polish-burst fast paths
+# ---------------------------------------------------------------------------
+
+
+def test_invalidate_subtree_leaf_keeps_ancestor_cache(_app: QApplication) -> None:
+    """Leaf class changes must not disturb other cached widgets."""
+    engine = make_engine("""
+        .outer { background-color: red; transition: background-color 100ms; }
+        .outer .inner { background-color: blue; transition: background-color 100ms; }
+    """)
+    parent = QFrame()
+    parent.setProperty("class", "outer")
+    child = QLabel("x", parent)
+    child.setProperty("class", "inner")
+    try:
+        assert engine.matcher.matching_rules(parent)
+        assert engine.matcher.matching_rules(child)
+        engine.matcher.invalidate_subtree(child)  # leaf: no QWidget descendants
+        assert engine.matcher.widget_cache.get(id(child)) is None
+        # Ancestor entry survives; descendant matches still resolve identically.
+        assert engine.matcher.widget_cache.get(id(parent)) is not None
+        assert any(r.selector == ".outer .inner" for r in engine.matcher.matching_rules(child))
+    finally:
+        destroy(parent)
+
+
+def test_invalidate_subtree_non_leaf_clears_descendants(_app: QApplication) -> None:
+    """Non-leaf class changes must still invalidate descendant caches."""
+    engine = make_engine("""
+        .outer .inner { background-color: blue; transition: background-color 100ms; }
+    """)
+    parent = QFrame()
+    parent.setProperty("class", "outer")
+    child = QLabel("x", parent)
+    child.setProperty("class", "inner")
+    try:
+        assert any(r.selector == ".outer .inner" for r in engine.matcher.matching_rules(child))
+        parent.setProperty("class", "other")
+        engine.matcher.invalidate_subtree(parent)
+        assert engine.matcher.widget_cache.get(id(child)) is None
+        assert engine.matcher.matching_rules(child) == []
+    finally:
+        destroy(parent)
+
+
+def test_polish_evaluate_unmatched_widget_creates_no_context(_app: QApplication) -> None:
+    """POLISH evaluation below a quick-filter hit but with no structural match skips.
+
+    `.item` is quick-relevant via the descendant rule, yet the lone widget has no
+    `.container` ancestor, so nothing is engine-managed and no WidgetState is allocated.
+    """
+    engine = make_engine("""
+        .container .item { background-color: red; transition: background-color 100ms; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "item")
+    try:
+        assert engine.should_evaluate(widget) is True
+        assert engine.matcher.matching_rules(widget) == []
+        engine.matcher.clear_caches()
+        engine.evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+        assert id(widget) not in engine.store.contexts
+    finally:
+        destroy(widget)
+
+
+def test_polish_evaluate_animated_widget_creates_context(_app: QApplication) -> None:
+    """Widgets with engine-managed rules still get state on POLISH."""
+    engine = make_engine(".box { background-color: red; transition: background-color 100ms; }")
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    try:
+        engine.evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+        assert id(widget) in engine.store.contexts
+    finally:
+        destroy(widget)
+
+
+def test_polish_flush_static_burst_creates_no_context(_app: QApplication) -> None:
+    """Full flush over static widgets allocates no per-widget state."""
+    engine = make_engine("""
+        .container .item { background-color: red; transition: background-color 100ms; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "item")
+    try:
+        q = engine.polish
+        q.enqueue(widget, schedule_flush=lambda: None)
+        q.flush(engine)
+        assert id(widget) not in engine.store.contexts
+    finally:
+        destroy(widget)
+
+
+def test_pseudo_presence_flags(_app: QApplication) -> None:
+    """Sheet-wide :hover/:active flags gate the Polish-time lookups."""
+    hover_only = make_engine(".box:hover { background-color: red; transition: background-color 100ms; }")
+    assert hover_only.matcher.index.flags.has_hover is True
+    assert hover_only.matcher.index.flags.has_active is False
+    plain = make_engine(".box { color: red; }")
+    assert plain.matcher.index.flags.has_hover is False
+    assert plain.matcher.index.flags.has_active is False

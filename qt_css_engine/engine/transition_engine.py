@@ -251,24 +251,36 @@ class TransitionEngine(QObject):
     def deactivate_clicked(self, widget: QWidget, wid: int, gen: int) -> None:
         clicked_handler.deactivate_clicked(self, widget, wid, gen)
 
-    def ensure_wa_hover(self, widget: QWidget) -> None:
-        """Set WA_Hover on widget if it matches any rule with a :hover pseudo-class."""
+    def ensure_wa_hover(self, widget: QWidget, *, rules: list[StyleRule] | None = None) -> None:
+        """Set WA_Hover on widget if it matches any rule with a :hover pseudo-class.
+
+        *rules* must equal matching_rules(widget); gate and lookup are skipped.
+        """
         if widget.testAttribute(Qt.WidgetAttribute.WA_Hover):
             return  # already set
-        if not self.should_evaluate(widget):
+        if not self.matcher.index.flags.has_hover:
             return
-        if any(":hover" in rule.pseudo_set for rule in self.matcher.matching_rules(widget)):
+        if rules is None and not self.should_evaluate(widget):
+            return
+        matched = rules if rules is not None else self.matcher.matching_rules(widget)
+        if any(":hover" in rule.pseudo_set for rule in matched):
             widget.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
 
-    def seed_active_pseudo(self, widget: QWidget) -> None:
-        """Add :active to the widget's pseudo set at Polish time if its window is currently active."""
-        if not any(":active" in r.pseudo_set for r in self.matcher.matching_rules(widget)):
+    def seed_active_pseudo(self, widget: QWidget, *, rules: list[StyleRule] | None = None) -> None:
+        """Add :active to the widget's pseudo set at Polish time if its window is currently active.
+
+        *rules* must equal matching_rules(widget); gate and lookup are skipped.
+        """
+        if not self.matcher.index.flags.has_active:
+            return
+        matched = rules if rules is not None else self.matcher.matching_rules(widget)
+        if not any(":active" in r.pseudo_set for r in matched):
             return
         ctx = self.get_context(widget)
         self.active_rule_widgets[id(widget)] = widget
         if not widget.isActiveWindow():
             return
-        if not self.should_evaluate(widget):
+        if rules is None and not self.should_evaluate(widget):
             return
         ctx.active_pseudos.add(":active")
 
@@ -308,9 +320,11 @@ class TransitionEngine(QObject):
     # State evaluation — delegates to WidgetEvaluator (explicit pipeline object)
     # -------------------------------------------------------------------------
 
-    def evaluate_widget_state(self, widget: QWidget, cause: EvaluationCause = EvaluationCause.DIRECT) -> None:
+    def evaluate_widget_state(
+        self, widget: QWidget, cause: EvaluationCause = EvaluationCause.DIRECT, *, rules: list[StyleRule] | None = None
+    ) -> None:
         """Evaluate all animated CSS properties for widget and start, update, or snap animations."""
-        self.evaluator.evaluate(widget, cause)
+        self.evaluator.evaluate(widget, cause, rules=rules)
 
     # -------------------------------------------------------------------------
     # Rule hot-reload — delegates to reload handler

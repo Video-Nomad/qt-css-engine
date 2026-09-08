@@ -1,5 +1,5 @@
 import weakref
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from qt_css_engine.matching.cache import IdentityCache, WidgetCache
 from qt_css_engine.matching.compiler import CompiledSegment, WidgetIdentity, attr_matches, compile_segment
@@ -78,6 +78,16 @@ class RuleMatcher:
                 self.index.quick.tags.add(last_seg.tag)
             self.index.quick.classes.update(last_seg.classes)
 
+        # Sheet-wide :hover/:active presence for Polish-time fast paths.
+        for rule in self.rules:
+            pseudos = rule.pseudo_set
+            if ":hover" in pseudos:
+                self.index.flags.has_hover = True
+            if ":active" in pseudos:
+                self.index.flags.has_active = True
+            if self.index.flags.has_hover and self.index.flags.has_active:
+                break
+
     def _index_rule(self, index: int, last: CompiledSegment, freq: dict[str, int] | None = None) -> None:
         if last.obj_name is not None:
             self.index.buckets.by_id.setdefault(last.obj_name, []).append(index)
@@ -135,16 +145,27 @@ class RuleMatcher:
         if not relevant:
             self.invalidate_widget_id(wid)
         else:
-            for cached_wid, widget_ref in list(self.widget_cache.refs.items()):
-                cached_widget = widget_ref()
-                if cached_widget is None:
-                    self.invalidate_widget_id(cached_wid)
-                    continue
-                try:
-                    if cached_widget is widget or self._is_descendant_of(cached_widget, widget):
+            # Leaf fast path: no descendants below, skip the refs scan.
+            try:
+                # Stub says non-optional; Qt returns None when absent.
+                first_descendant = cast(QWidget | None, widget.findChild(QWidget))
+                leaf = first_descendant is None
+            except RuntimeError:
+                self.invalidate_widget_id(wid)
+                return
+            if leaf:
+                self.invalidate_widget_id(wid)
+            else:
+                for cached_wid, widget_ref in list(self.widget_cache.refs.items()):
+                    cached_widget = widget_ref()
+                    if cached_widget is None:
                         self.invalidate_widget_id(cached_wid)
-                except RuntimeError:
-                    self.invalidate_widget_id(cached_wid)
+                        continue
+                    try:
+                        if cached_widget is widget or self._is_descendant_of(cached_widget, widget):
+                            self.invalidate_widget_id(cached_wid)
+                    except RuntimeError:
+                        self.invalidate_widget_id(cached_wid)
         self.widget_cache.idents[wid] = ident
         if wid not in self.widget_cache.refs:
             self.widget_cache.refs[wid] = weakref.ref(widget, lambda _ref, _wid=wid: self.invalidate_widget_id(_wid))

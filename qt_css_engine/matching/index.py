@@ -20,6 +20,8 @@ class Flags:
     has_descendant: bool = False
     has_effect: bool = False
     has_border_radius: bool = False
+    has_hover: bool = False
+    has_active: bool = False
 
 
 @dataclass
@@ -54,6 +56,8 @@ class StyleIndex:
         self.flags.has_descendant = False
         self.flags.has_effect = False
         self.flags.has_border_radius = False
+        self.flags.has_hover = False
+        self.flags.has_active = False
         self.buckets.by_id.clear()
         self.buckets.by_tag.clear()
         self.buckets.by_class.clear()
