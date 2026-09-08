@@ -120,7 +120,8 @@ class RuleMatcher:
     def invalidate_widget_id(self, wid: int) -> None:
         self.widget_cache.invalidate(wid)
 
-    def _is_ancestor_relevant(self, ident: WidgetIdentity) -> bool:
+    def is_ancestor_relevant(self, ident: WidgetIdentity) -> bool:
+        """Whether a widget identity can anchor a descendant selector."""
         return self.index.ancestor.is_relevant(ident)
 
     def invalidate_subtree(self, widget: QWidget) -> None:
@@ -130,7 +131,7 @@ class RuleMatcher:
             return
         ident = self.identity(widget)
         previous = self.widget_cache.previous_ident(wid)
-        relevant = self._is_ancestor_relevant(ident) or previous is None or self._is_ancestor_relevant(previous)
+        relevant = self.is_ancestor_relevant(ident) or previous is None or self.is_ancestor_relevant(previous)
         if not relevant:
             self.invalidate_widget_id(wid)
         else:

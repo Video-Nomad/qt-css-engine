@@ -12,7 +12,7 @@ from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QEasingCurve
-from qt_css_engine.qt_compat.QtWidgets import QApplication, QWidget
+from qt_css_engine.qt_compat.QtWidgets import QApplication, QFrame, QLabel, QWidget
 from qt_css_engine.utils.qt_helpers import safe_disconnect
 
 
@@ -286,3 +286,36 @@ def test_post_clean_noop_skips_natural_measurement(_app: QApplication, monkeypat
         anim.anim.stop()
     finally:
         destroy(widget)
+
+
+def test_hidden_ancestor_class_change_deferred_to_polish(_app: QApplication) -> None:
+    """Hidden ancestor class sets must not write scoped inline styles immediately.
+
+    Regression (YASB adaptive startup): writing the ancestor inline before
+    descendants exist/are polished makes Qt drop ancestor-dependent descendant
+    QSS (e.g. `.active-window-widget .icon`) on first polish. The class change
+    must defer to the Polish burst on show; visible widgets keep the sync path.
+    """
+    engine = make_engine("""
+        .outer { background-color: red; transition: background-color 100ms; }
+        .outer .inner { padding-right: 20px; }
+    """)
+    _app.installEventFilter(engine)
+    parent = QFrame()
+    try:
+        assert not parent.isVisible()
+        parent.setProperty("class", "outer")
+        child = QLabel("x", parent)
+        child.setProperty("class", "inner")
+        _app.processEvents()
+        # Deferred: no context/inline created while the tree is hidden.
+        assert id(parent) not in engine.store.contexts
+        assert parent.styleSheet() == ""
+        parent.show()
+        _app.processEvents()
+        _app.processEvents()
+        ctx = engine.store.contexts.get(id(parent))
+        assert ctx is not None
+        assert ctx.css_anim_props.get("background-color") is not None
+    finally:
+        destroy(parent)
