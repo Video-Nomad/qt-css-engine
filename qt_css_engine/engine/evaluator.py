@@ -93,7 +93,7 @@ class WidgetEvaluator:
             needs_style_update = self._apply_animated_props(ev)
             if self.cleanup_orphans(ctx, state):
                 needs_style_update = True
-            if needs_style_update:
+            if needs_style_update or (ctx.style_flush_immediate and ctx.style_flush_pending):
                 event_logger.debug("Updating style: %s", widget)
                 self._engine.writer.flush_now(widget, ctx)
             apply_cursor_style(widget, ctx, state.target_props)

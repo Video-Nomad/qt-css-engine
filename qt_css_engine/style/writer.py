@@ -32,7 +32,7 @@ class StyleWriter:
 
     Batching: animation ticks call schedule() which coalesces to one stylesheet write
     per event-loop turn via QTimer.singleShot(0). Class-change evaluation sets
-    style_flush_immediate for its first frame so it lands synchronously.
+    style_flush_immediate so its first frame is flushed once at the end of evaluation.
     """
 
     def __init__(self, get_ctx: Callable[[int], WidgetState | None] | None = None) -> None:
@@ -44,12 +44,11 @@ class StyleWriter:
 
     def schedule(self, widget: QWidget, ctx: WidgetState) -> None:
         """Queue one stylesheet write after the current burst of animation ticks."""
-        # style_flush_immediate is set for the duration of a class-change evaluation so the
-        # first frame lands before Qt can paint the freshly polished class styles.  It is not
-        # extended to the rest of the animation: those ticks batch exactly like hover-driven
-        # ones, so a widget writes its stylesheet once per frame instead of once per property.
+        # The evaluator commits the complete first frame synchronously. Writing here would
+        # repolish once per property and expose partially updated box-model values to Qt.
+        # No timer is needed: this batch is drained before evaluation returns.
         if ctx.style_flush_immediate:
-            self.flush_now(widget, ctx)
+            ctx.style_flush_pending = True
             return
         if ctx.style_flush_pending:
             return

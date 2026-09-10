@@ -472,6 +472,66 @@ def test_class_change_numeric_initial_tick_flushes_start_size_immediately(_app: 
     destroy(widget)
 
 
+@pytest.mark.parametrize("property_name", ["class", "active"])
+@pytest.mark.parametrize("delay_ms", [0, -60])
+def test_property_change_batches_complete_first_frame(_app: QApplication, property_name: str, delay_ms: int) -> None:
+    """All five start values must reach Qt together before the property event returns."""
+    selector = ".box.on" if property_name == "class" else ".box[active=true]"
+    props = {"background-color", "color", "min-width", "max-width", "font-size"}
+    transitions = ", ".join(f"{prop} 300ms linear {delay_ms}ms" for prop in sorted(props))
+    cleaned, rules = extract_rules(f"""
+        .box {{
+            background-color: red; color: white;
+            min-width: 80px; max-width: 80px; font-size: 12px;
+            transition: {transitions};
+        }}
+        {selector} {{
+            background-color: blue; color: black;
+            min-width: 140px; max-width: 140px; font-size: 16px;
+        }}
+    """)
+    root = QWidget()
+    widget = TrackedWidget()
+    widget.setParent(root)
+    widget.setProperty("class", "box")
+    root.setStyleSheet(cleaned)
+    widget.ensurePolished()
+    engine = TransitionEngine(rules, parent=root, startup_delay_ms=0)
+    engine.evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
+    ctx = engine.get_context(widget)
+    _app.installEventFilter(engine)
+    try:
+        count_before = widget.setStyleSheet_count
+        widget.setProperty(property_name, "box on" if property_name == "class" else True)
+
+        assert widget.setStyleSheet_count == count_before + 1
+        assert not ctx.style_flush_pending
+        assert not ctx.style_flush_immediate
+        assert ctx.class_anim_props == props
+        for prop in props:
+            anim = ctx.active_animations[prop].anim
+            assert anim.state() == QAbstractAnimation.State.Running
+            assert anim.currentTime() == -delay_ms
+            assert f"{prop}: {ctx.css_anim_props[prop]};" in widget.styleSheet()
+            anim.pause()
+
+        engine.writer.flush_scheduled(widget, id(widget))
+        assert widget.setStyleSheet_count == count_before + 1
+
+        for anim_obj in ctx.active_animations.values():
+            anim_obj.anim.setCurrentTime(300)
+        target = engine.cascade.collect(widget, ctx).target_props
+        for prop in props:
+            actual = ctx.css_anim_props[prop]
+            if "color" in prop:
+                assert QColor(actual) == QColor(target[prop])
+            else:
+                assert float(actual.removesuffix("px")) == float(target[prop].removesuffix("px"))
+    finally:
+        _app.removeEventFilter(engine)
+        destroy(root)
+
+
 def test_class_change_ticks_after_the_first_frame_are_batched(_app: QApplication) -> None:
     """
     Only the initial class-change frame is written synchronously.
