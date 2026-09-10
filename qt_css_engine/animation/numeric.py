@@ -223,19 +223,19 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
         target_raw: str,
         clean_on_finish: bool = False,
         box_size: tuple[float, float] | None = None,
-    ) -> None:
+    ) -> bool:
         parsed = parse_css_numeric(target_raw)
         if parsed is None:
-            return
+            return False
         self._radius_target = parsed if self.prop in BORDER_RADIUS_PROPS else None
         t_val = self._effective_target_value(parsed[0], parsed[1], box_size)
         is_running = self.anim.state() == self.anim.State.Running
         if is_running and t_val == self.anim.endValue():
-            return
+            return False
         if not is_running and abs(t_val - self.current_val) < 1e-6:
             self._target_box_size = box_size
             self._write_current_style_value_if_needed(target_raw, box_size)
-            return
+            return False
         self._target_box_size = box_size
         if self.is_steps_curve(self.anim.easingCurve()) and self._should_reverse_steps(
             is_running=is_running, target=t_val, origin=self._anim_origin_val
@@ -250,7 +250,7 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
             self.anim.setEndValue(t_val)
             self.anim.start()
             self.anim.setCurrentTime(seek_ms)
-            return
+            return False
         self._anim_origin_val = self.current_val
         self._clean_on_finish = clean_on_finish
         self.anim.stop()
@@ -258,3 +258,4 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
         self.anim.setEndValue(t_val)
         self.anim.start()
         self._on_tick(self.current_val)
+        return True

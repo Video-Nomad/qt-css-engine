@@ -45,11 +45,18 @@ class OpacityAnimation(QObject):
             self._current_val = float(t_val)
             apply_opacity_to_widget(self.widget, self._current_val, self.effect_priority)
 
-    def set_target(self, target_raw: str) -> None:
+    def set_target(self, target_raw: str) -> bool:
         t_val = parse_css_val(target_raw)
         if not isinstance(t_val, (int, float)):
-            return
+            return False
+        target = float(t_val)
+        is_running = self.anim.state() == self.anim.State.Running
+        if is_running and target == self.anim.endValue():
+            return False
+        if not is_running and abs(target - self._current_val) < 1e-6:
+            return False
         self.anim.stop()
         self.anim.setStartValue(self._current_val)
-        self.anim.setEndValue(float(t_val))
+        self.anim.setEndValue(target)
         self.anim.start()
+        return True

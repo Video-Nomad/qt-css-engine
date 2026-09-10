@@ -306,8 +306,8 @@ class WidgetEvaluator:
         anim_obj = self._prepare_animation(ev, prop, resolved, resolve_easing_curve(trans.easing))
         if anim_obj is None:
             return False
-        self._set_target(ev.widget, prop, anim_obj, resolved, ev.state.target_props)
-        if not is_running and trans.delay_ms < 0 and anim_obj.anim.state() == QAbstractAnimation.State.Running:
+        restarted = self._set_target(ev.widget, prop, anim_obj, resolved, ev.state.target_props)
+        if trans.delay_ms < 0 and restarted and anim_obj.anim.state() == QAbstractAnimation.State.Running:
             anim_obj.anim.setCurrentTime(min(-trans.delay_ms, trans.duration_ms))
         self._wire_callbacks(ev, prop, anim_obj)
         return False
@@ -334,14 +334,18 @@ class WidgetEvaluator:
         animation: Animation,
         resolved: ResolvedProperty,
         target_props: dict[str, str],
-    ) -> None:
-        """Configure the target value and box-model inputs for an animation."""
+    ) -> bool:
+        """Configure the target value and box-model inputs for an animation.
+
+        Returns True when the animator (re)started and a negative-delay
+        head-start still needs to be applied. Steps() reversals already seek
+        to their mirrored time, so they return False to preserve continuity.
+        """
         if not isinstance(animation, GenericPropertyAnimation):
-            animation.set_target(resolved.target)
-            return
+            return animation.set_target(resolved.target)
         animation.update_box_props(target_props)
         box_size = target_border_radius_box_size(widget, target_props) if prop in BORDER_RADIUS_PROPS else None
-        animation.set_target(resolved.target, clean_on_finish=resolved.is_natural_target, box_size=box_size)
+        return animation.set_target(resolved.target, clean_on_finish=resolved.is_natural_target, box_size=box_size)
 
     def _wire_callbacks(self, ev: Evaluation, prop: str, animation: Animation) -> None:
         """Attach the completion behavior required by the current evaluation cause."""

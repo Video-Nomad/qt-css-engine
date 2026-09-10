@@ -2396,6 +2396,53 @@ def test_negative_delay_exceeds_duration_snaps(_app: QApplication) -> None:
     destroy(widget)
 
 
+def test_negative_delay_applies_on_retarget(_app: QApplication) -> None:
+    """Negative delay: quick hover reversal still seeks |delay| into the new transition."""
+    engine = make_engine("""
+        .box { background-color: steelblue; transition: background-color 1000ms linear -500ms; }
+        .box:hover { background-color: royalblue; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    hover_widget(engine, widget)
+
+    anim_obj = _get_anim(engine, widget, "background-color")
+    assert anim_obj.anim.currentTime() >= 500, "fresh hover must seek 500ms head-start"
+
+    # Rapid unhover while still running must retarget with the same head-start,
+    # not restart the full 1000ms from 0.
+    engine.get_context(widget).active_pseudos = set()
+    engine.evaluate_widget_state(widget)
+    assert anim_obj.anim.state() == QAbstractAnimation.State.Running
+    assert anim_obj.anim.currentTime() >= 500, "retarget must seek 500ms head-start"
+
+    # Rapid re-hover while still running: same expectation in the other direction.
+    engine.get_context(widget).active_pseudos = {":hover"}
+    engine.evaluate_widget_state(widget)
+    assert anim_obj.anim.state() == QAbstractAnimation.State.Running
+    assert anim_obj.anim.currentTime() >= 500, "second retarget must seek 500ms head-start"
+
+    destroy(widget)
+
+
+def test_negative_delay_same_target_no_reseek(_app: QApplication) -> None:
+    """Negative delay: re-evaluating the same target must not jump back to |delay|."""
+    engine = make_engine("""
+        .box { background-color: steelblue; transition: background-color 1000ms linear -500ms; }
+        .box:hover { background-color: royalblue; }
+    """)
+    widget = QWidget()
+    widget.setProperty("class", "box")
+    hover_widget(engine, widget)
+
+    anim_obj = _get_anim(engine, widget, "background-color")
+    anim_obj.anim.setCurrentTime(800)
+    engine.evaluate_widget_state(widget)
+    assert anim_obj.anim.currentTime() == 800, "same-target re-eval must not reseek"
+
+    destroy(widget)
+
+
 # ---------------------------------------------------------------------------
 # cursor property
 # ---------------------------------------------------------------------------

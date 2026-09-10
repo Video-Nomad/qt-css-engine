@@ -105,13 +105,13 @@ class ColorAnimation(StepsReversalMixin, QObject):
         self._anim_origin_color = QColor(self.current_color)
         self._props[self.prop] = self.current_color.name(QColor.NameFormat.HexArgb)
 
-    def set_target(self, target_raw: str) -> None:
+    def set_target(self, target_raw: str) -> bool:
         target_color = parse_color(target_raw)
         is_running = self.anim.state() == self.anim.State.Running
         if is_running and target_color == self.end_color:
-            return
+            return False
         if not is_running and target_color == self.current_color:
-            return
+            return False
         if self.is_steps_curve(self.anim.easingCurve()) and self._should_reverse_steps(
             is_running=is_running, target=target_color, origin=self._anim_origin_color
         ):
@@ -128,7 +128,7 @@ class ColorAnimation(StepsReversalMixin, QObject):
             self.anim.start()
             self.anim.setCurrentTime(seek_ms)
             self._on_tick(self.anim.easingCurve().valueForProgress(min(seek_ms, dur) / dur))
-            return
+            return False
         self._anim_origin_color = QColor(self.current_color)
         self.start_color = self.current_color
         self.end_color = target_color
@@ -138,3 +138,4 @@ class ColorAnimation(StepsReversalMixin, QObject):
         self.anim.setEndValue(1.0)
         self.anim.start()
         self._on_tick(self.anim.easingCurve().valueForProgress(0.0))
+        return True
