@@ -4,13 +4,13 @@ from collections.abc import Callable
 
 from qt_css_engine.animation.base import StepsReversalMixin
 from qt_css_engine.constants import BORDER_RADIUS_PROPS, NON_NEGATIVE_PROPS, SIZE_PROPS
-from qt_css_engine.geometry.clamp import clamp_border_radius
+from qt_css_engine.geometry.clamp import clamp_border_radius, target_border_radius_box_size
 from qt_css_engine.qt_compat import is_qobject_alive
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QObject, QVariantAnimation
 from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.effects import update_shadow_ancestor
-from qt_css_engine.style.writer import scoped_anim_style
+from qt_css_engine.style.writer import StyleWriter, scoped_anim_style
 from qt_css_engine.utils.parsing import parse_css_numeric
 
 
@@ -37,6 +37,7 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
         self._box_props = dict(box_props or {})
         self.current_val = self._effective_anim_value(float(initial_val), unit)
         self._target_box_size: tuple[float, float] | None = None
+        self._radius_target: tuple[float, str] | None = None
         self.natural_val: float = float(initial_val)
         self._clean_on_finish = False
         self._anim_origin_val: float | None = self.current_val
@@ -85,6 +86,21 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
 
     def update_box_props(self, box_props: dict[str, str]) -> None:
         self._box_props = dict(box_props)
+
+    def refresh_radius_geometry(self) -> None:
+        """Resolve a moving radius endpoint without restarting the transition clock."""
+        if self._radius_target is None:
+            return
+        value, unit = self._radius_target
+        self._target_box_size = target_border_radius_box_size(self.widget, self._box_props)
+        target = self._effective_target_value(value, unit, self._target_box_size)
+        if self.anim.state() != self.anim.State.Stopped:
+            # QVariantAnimation re-interpolates at the existing time/easing when its
+            # endpoint changes. Re-running set_target() would restart on every resize.
+            self.anim.setEndValue(target)
+            self._on_tick(self.anim.currentValue())
+        else:
+            self._on_tick(target)
 
     def _write_current_style_value_if_needed(self, target_raw: str, box_size: tuple[float, float] | None) -> None:
         props = self._props
@@ -141,13 +157,8 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
             except RuntimeError:
                 pass
             return
-        ctx.style_flush_pending = False
         try:
-            style = scoped_anim_style(self.widget, props)
-            if style != ctx.applied_style or self.widget.styleSheet() != style:
-                ctx.applied_style = style
-                self.widget.setStyleSheet(style)
-            update_shadow_ancestor(self.widget)
+            StyleWriter().flush_now(self.widget, ctx)
         except RuntimeError:
             pass
 
@@ -186,6 +197,7 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
         self._clean_on_finish = False
         parsed = parse_css_numeric(value_raw)
         if parsed is not None:
+            self._radius_target = parsed if self.prop in BORDER_RADIUS_PROPS else None
             raw_val, unit = parsed
             self.unit = unit
             self.current_val = self._effective_target_value(raw_val, unit, box_size)
@@ -198,6 +210,7 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
             self._props[self.prop] = f"{written:.3f}{self.unit}"
 
     def snap_to_natural(self) -> None:
+        self._radius_target = None
         self._target_box_size = None
         self.anim.stop()
         self._clean_on_finish = False
@@ -214,6 +227,7 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
         parsed = parse_css_numeric(target_raw)
         if parsed is None:
             return
+        self._radius_target = parsed if self.prop in BORDER_RADIUS_PROPS else None
         t_val = self._effective_target_value(parsed[0], parsed[1], box_size)
         is_running = self.anim.state() == self.anim.State.Running
         if is_running and t_val == self.anim.endValue():

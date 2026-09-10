@@ -101,6 +101,8 @@ class StyleWriter:
 
     def normalize(self, widget: QWidget, ctx: WidgetState) -> None:
         """Clamp radius values against the same pending box model that is about to be applied."""
+        from qt_css_engine.animation.numeric import GenericPropertyAnimation
+
         props = ctx.css_anim_props
         # Resolving the target box size reads sizeHint() and re-parses the box model; skip it
         # entirely unless a radius is actually pending, which is the case on most flushes.
@@ -115,6 +117,11 @@ class StyleWriter:
             if parsed is None:
                 continue
             value, unit = parsed
+            animation = ctx.active_animations.get(prop)
+            if isinstance(animation, GenericPropertyAnimation):
+                # A previous flush may have clamped the sample to an earlier size.
+                # Keep the animator's value so later size ticks can expose it again.
+                value = animation.current_val
             clamped = clamp_border_radius(widget, prop, max(0.0, value), unit, box_props, box_size)
-            if clamped != value:
+            if clamped != parsed[0]:
                 props[prop] = f"{clamped:.3f}{unit}"

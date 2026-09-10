@@ -3,6 +3,8 @@ import os
 from typing import TYPE_CHECKING
 
 from qt_css_engine.animation.delay import DelayScheduler
+from qt_css_engine.animation.numeric import GenericPropertyAnimation
+from qt_css_engine.constants import BORDER_RADIUS_PROPS
 from qt_css_engine.engine.cascade import CascadeEvaluator
 from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.engine.evaluator import WidgetEvaluator
@@ -186,13 +188,21 @@ class TransitionEngine(QObject):
         self.queue_polish_evaluation(widget)
 
     def on_resize(self, widget: QWidget) -> None:
-        """Refresh static border-radius clamps after layout assigns a new widget size."""
+        """Refresh radius geometry without snapping unrelated running transitions."""
         if not self.matcher.index.flags.has_border_radius:
             return
         ctx = self.store.contexts.get(id(widget))
         if is_suppressed(ctx):
             return
         if ctx is not None and self._has_running_animation(ctx):
+            # Layout may change an unconstrained axis while padding/size animates.
+            # Refresh only geometry-dependent values; a Polish evaluation would
+            # snap every running transition to its destination.
+            if ctx.css_anim_props.keys() & BORDER_RADIUS_PROPS:
+                for prop, animation in ctx.active_animations.items():
+                    if prop in BORDER_RADIUS_PROPS and isinstance(animation, GenericPropertyAnimation):
+                        animation.refresh_radius_geometry()
+                self.writer.flush_now(widget, ctx)
             return
         if not self.should_evaluate(widget):
             return
