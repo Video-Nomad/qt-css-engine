@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 from qt_css_engine.constants import BORDER_RADIUS_PROPS, EFFECT_PROPS
+from qt_css_engine.css.properties import is_animatable
 from qt_css_engine.engine.evaluation import ResolvedRuleState
 from qt_css_engine.geometry.clamp import clamp_border_radius, target_border_radius_box_size
 from qt_css_engine.matching.matcher import RuleMatcher
@@ -69,14 +70,14 @@ class CascadeEvaluator:
         all_spec = state.transitions.pop("all", None)
         state.animated_props.discard("all")
         for prop in set(state.base_props) | set(state.target_props):
-            if self._is_animatable(prop):
+            if is_animatable(prop):
                 state.animated_props.add(prop)
                 if prop not in state.transitions and all_spec is not None:
                     state.transitions[prop] = all_spec
         if all_spec is not None:
             engine_managed: set[str] = set(ctx.css_anim_props) | set(ctx.active_animations)
             for prop in engine_managed:
-                if prop not in state.animated_props and self._is_animatable(prop) and prop not in EFFECT_PROPS:
+                if prop not in state.animated_props and is_animatable(prop) and prop not in EFFECT_PROPS:
                     state.animated_props.add(prop)
                     state.transitions[prop] = all_spec
 
@@ -112,11 +113,3 @@ class CascadeEvaluator:
             return False
         box_size = target_border_radius_box_size(widget, target_props)
         return clamp_border_radius(widget, prop, max(0.0, value), unit, target_props, box_size) != value
-
-    @staticmethod
-    def _is_animatable(prop: str) -> bool:
-        from qt_css_engine.constants import EFFECT_PROPS, SUPPORTED_NUMERIC_PROPS
-
-        if prop == "color" or prop.endswith("-color"):
-            return True
-        return prop in EFFECT_PROPS or prop in SUPPORTED_NUMERIC_PROPS

@@ -365,9 +365,9 @@ def test_is_animatable_matrix() -> None:
 
 
 def engine_is_animatable(prop: str) -> bool:
-    from qt_css_engine.engine.cascade import CascadeEvaluator
+    from qt_css_engine.css.properties import is_animatable
 
-    return CascadeEvaluator._is_animatable(prop)
+    return is_animatable(prop)
 
 
 # ---------------------------------------------------------------------------

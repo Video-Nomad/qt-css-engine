@@ -263,6 +263,91 @@ def test_empty_pseudo_block_preserved_for_wa_hover() -> None:
     assert ".btn:hover" in cleaned
 
 
+@pytest.mark.parametrize("selector", [".box:hover", '.box[active="true"]'])
+@pytest.mark.parametrize(
+    "transition", ["transition: all 300ms", "transition-property: all; transition-duration: 300ms"]
+)
+def test_transition_all_preserves_static_declarations(selector: str, transition: str) -> None:
+    static_props = {
+        "border-style": "solid",
+        "border-top-style": "dashed",
+        "border-image": "url(border.png) 1",
+        "image": "url(icon.png)",
+        "background-image": "url(background.png)",
+        "background-repeat": "no-repeat",
+        "background-position": "center",
+        "font-family": "Arial",
+        "font-style": "italic",
+        "text-align": "center",
+        "text-decoration": "underline",
+    }
+    declarations = " ".join(f"{prop}: {value};" for prop, value in static_props.items())
+    css = f"""
+        .box {{ {transition}; }}
+        {selector} {{
+            {declarations}
+            color: blue;
+            padding: 4px;
+            opacity: 0.5;
+            cursor: pointer;
+            box-shadow: 1px 2px 3px black;
+        }}
+    """
+    cleaned, rules = extract_rules(css)
+    body = cleaned_block(cleaned, selector)
+    assert {line.strip() for line in body.splitlines()} == {f"{prop}: {value};" for prop, value in static_props.items()}
+    rule = get_rule(rules, selector)
+    assert rule.properties.items() >= static_props.items()
+    assert rule.properties["color"] == "blue"
+    assert rule.properties["padding-top"] == "4px"
+    assert rule.properties["cursor"] == "pointer"
+    assert rule.properties["box-shadow"] == "1px 2px 3px black"
+
+
+@pytest.mark.parametrize("selector", [".box:hover", '.box[active="true"]'])
+@pytest.mark.parametrize("transition_prop", ["all", "border", "border-color", "border-top-color"])
+def test_mixed_border_shorthand_preserves_static_components(selector: str, transition_prop: str) -> None:
+    css = f"""
+        .box {{ transition: {transition_prop} 300ms; }}
+        {selector} {{ border: 2px dashed red; }}
+    """
+    cleaned, _ = extract_rules(css)
+    expected = {"border-style: dashed;"}
+    if transition_prop in ("border-color", "border-top-color"):
+        expected |= {f"border-{side}-width: 2px;" for side in ("top", "right", "bottom", "left")}
+    if transition_prop == "border-top-color":
+        expected |= {f"border-{side}-color: red;" for side in ("right", "bottom", "left")}
+    assert {line.strip() for line in cleaned_block(cleaned, selector).splitlines()} == expected
+
+
+def test_partially_animated_padding_preserves_static_sides_and_declaration_order() -> None:
+    css = """
+        .box { transition: padding-top 300ms; }
+        .box:hover { padding-left: 1px; padding: 2px 3px 4px 5px; padding-right: 6px; }
+    """
+    cleaned, _ = extract_rules(css)
+    assert [line.strip() for line in cleaned_block(cleaned, ".box:hover").splitlines()] == [
+        "padding-left: 1px;",
+        "padding-right: 3px;",
+        "padding-bottom: 4px;",
+        "padding-left: 5px;",
+        "padding-right: 6px;",
+    ]
+
+
+def test_static_shorthands_preserved_with_transition_all() -> None:
+    css = """
+        .box { transition: all 300ms; border: 1px solid red; }
+        .box:hover { border-style: solid dashed; font: italic 12px Arial; }
+    """
+    cleaned, _ = extract_rules(css)
+    assert cleaned_block(cleaned, ".box {") == "border: 1px solid red;"
+    assert [line.strip() for line in cleaned_block(cleaned, ".box:hover").splitlines()] == [
+        "border-style: solid dashed;",
+        "font: italic 12px Arial;",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # StyleRule fields
 # ---------------------------------------------------------------------------
@@ -579,14 +664,14 @@ def test_transition_border_expands_to_animatable_longhands() -> None:
         assert t.easing == "ease"
 
 
-def test_border_shorthand_stripped_from_pseudo_block_when_animated() -> None:
+def test_border_shorthand_preserves_style_when_animated() -> None:
     css = """
     .box { border: 1px solid gray; }
     .box:hover { border: 3px solid white; transition: border 200ms; }
     """
     cleaned, _ = extract_rules(css)
     hover_body = cleaned_block(cleaned, ".box:hover")
-    assert "border" not in hover_body
+    assert hover_body == "border-style: solid;"
 
 
 def test_border_shorthand_in_base_block_preserved() -> None:

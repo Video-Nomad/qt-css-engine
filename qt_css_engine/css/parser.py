@@ -13,7 +13,7 @@ from tinycss2.ast import Node
 from qt_css_engine.css.gradients import translate_gradients
 from qt_css_engine.css.model import StyleRule, TransitionSpec
 from qt_css_engine.css.selector import split_selector
-from qt_css_engine.css.shorthand import expand_shorthand, should_strip_prop, transition_longhands
+from qt_css_engine.css.shorthand import expand_shorthand, static_declarations, transition_longhands
 from qt_css_engine.matching.compiler import compute_specificity
 
 _GRADIENT_VALUE_RE = re.compile(
@@ -243,13 +243,11 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
             p_val = translate_gradients(_serialize_value(decl.value))
             if p_name in ("box-shadow", "cursor"):
                 continue
-            if (
-                (pseudo_set or has_attr_block)
-                and not _is_static_gradient_prop(p_name, p_val)
-                and ("all" in animated_props or should_strip_prop(p_name, animated_props))
-            ):
-                continue
-            new_body_lines.append(f"    {p_name}: {p_val};")
+            if (pseudo_set or has_attr_block) and not _is_static_gradient_prop(p_name, p_val):
+                declarations = static_declarations(p_name, p_val, animated_props)
+            else:
+                declarations = {p_name: p_val}
+            new_body_lines.extend(f"    {prop}: {value};" for prop, value in declarations.items())
         if new_body_lines:
             cleaned_parts.append(f"{selector} {{\n" + "\n".join(new_body_lines) + "\n}")
         else:

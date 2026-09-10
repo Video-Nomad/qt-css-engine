@@ -6,6 +6,7 @@ import tinycss2
 from tinycss2.ast import Node
 
 from qt_css_engine.constants import BORDER_STYLE_KEYWORDS, BORDER_WIDTH_KEYWORDS, SHORTHAND_SIDES
+from qt_css_engine.css.properties import is_animatable
 
 _LEADING_DIGIT_RE = re.compile(r"^\d")
 
@@ -73,16 +74,14 @@ def transition_longhands(prop: str) -> list[str]:
     return [prop]
 
 
-def should_strip_prop(prop: str, animated_props: set[str]) -> bool:
-    if prop in animated_props:
-        return True
-    if prop == "border":
-        border_longhands = [
-            *SHORTHAND_SIDES["border-width"],
-            "border-style",
-            "border-color",
-            *SHORTHAND_SIDES["border-color"],
-        ]
-        return any(lh in animated_props for lh in border_longhands)
-    longhands: list[str] | None = SHORTHAND_SIDES.get(prop)
-    return bool(longhands and any(lh in animated_props for lh in longhands))
+def static_declarations(prop: str, value: str, animated_props: set[str]) -> dict[str, str]:
+    """Keep Qt-owned components, expanding a shorthand only when partially stripped."""
+    expanded = expand_shorthand(prop, value)
+    remaining = {
+        name: val
+        for name, val in expanded.items()
+        if not (is_animatable(name) and ("all" in animated_props or name in animated_props))
+    }
+    if len(remaining) == len(expanded):
+        return {prop: value}
+    return remaining
