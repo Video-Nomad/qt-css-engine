@@ -1,30 +1,10 @@
-# pyright: reportPrivateUsage=false
-"""Cold rule matching — 321 widgets, 458 rules, caches cleared each run."""
+"""Cold rule matching. See benchmarks/README.md for the timing boundary."""
 
-from benchmarks.common import build_engine_and_widgets, get_app
-from benchmarks.runner import BenchResult, summarize, time_call
-from qt_css_engine.qt_compat import qt_delete
+from benchmarks.runner import BenchResult
+from benchmarks.workloads import matching
 
 NAME = "Cold rule matching"
 
 
 def benchmark(*, warmup: int = 2, runs: int = 7) -> BenchResult:
-    bundle = build_engine_and_widgets()
-    matcher = bundle.engine.matcher
-    app = get_app()
-
-    def one_run() -> None:
-        matcher.clear_caches()
-        for w in bundle.all_widgets:
-            matcher.matching_rules(w)
-        app.processEvents()
-
-    times = time_call(one_run, warmup=warmup, runs=runs)
-
-    extra: dict[str, object] = {"widgets": len(bundle.all_widgets), "rules": len(matcher.rules)}
-
-    app.removeEventFilter(bundle.engine)
-    qt_delete(bundle.root)
-    app.processEvents()
-
-    return summarize(NAME, times, extra=extra)
+    return matching(NAME, cold=True, attrs=False, warmup=warmup, runs=runs)

@@ -1,110 +1,76 @@
-# Benchmarks — qt_css_engine
+# Performance comparisons
 
-Baseline workload:
+Run from the repository root in PowerShell. Pin the binding, then save a baseline
+**using this version of the benchmarks before changing the engine**:
 
-- **458 rules**, **321 widgets**, **40 widgets animating five properties over 15 synthetic frames**
-- Noise (`.noise-N`) rules carry `border-top-left-radius` so the resize storm exercises the clamp path
-- Offscreen (`QT_QPA_PLATFORM=offscreen`), fixed-hash (`PYTHONHASHSEED=0`) for reproducibility
-- Binding: PySide6 (offscreen)
+```powershell
+$env:QT_API = "pyqt6"  # or pyside6; keep it the same for both runs
+uv run python -m benchmarks --output .benchmarks/before.json
 
-## Running
-
-```bash
-# All benchmarks (default 7 runs each, 2 warmup)
-uv run python -m benchmarks
-
-# Faster — fewer runs
-uv run python -m benchmarks --repeat 2
-
-# Single scenario
-uv run python -m benchmarks --filter cold
-uv run python -m benchmarks --filter class
-uv run python -m benchmarks --filter hover
-
-# JSON output
-uv run python -m benchmarks --json > results.json
-
-# Fixed-hash, PySide6 (recommended for CI)
-PYTHONHASHSEED=0 QT_API=pyside6 uv run python -m benchmarks
-
-# Quiet — only final table
-uv run python -m benchmarks --quiet --repeat 2
-
-# Direct file entry (same as -m)
-uv run python benchmarks/run.py --list
+# Make the engine change, then run:
+uv run python -m benchmarks --compare .benchmarks/before.json --output .benchmarks/after.json
 ```
 
-## Scenarios
+Negative median changes mean faster; positive changes mean slower. Compare the
+sample spread too. Small changes within the run-to-run variation are inconclusive.
+For a closer look, use `--repeat 15 --warmup 3` on **both** runs and repeat the
+before/after experiment. Use the same machine, power mode, dependencies and idle
+background workload. Run timings without other test suites or profilers running.
 
-| Scenario | What it measures | Baseline |
-|---|---|---|
-| **Cold rule matching** | `RuleMatcher.matching_rules` for all 321 widgets with caches cleared (`clear_caches`). | ~1.4–1.8 ms |
-| **Warm cached matching** | Same sweep with caches hot (second pass). | ~0.04 ms |
-| **Initial evaluation** | Polish burst: `ensure_wa_hover` + `seed_active_pseudo` + `evaluate_widget_state(POLISH)` for 321 widgets. Engine construction (rule-index build) is inside the timed section. | ~29–30 ms |
-| **Cold attr matching** | Same cold sweep on 498 rules (40 extra `.item-N[active=true]`), half the animated widgets carrying `active=true`. | ~1.5–1.6 ms |
-| **Warm attr matching** | Same sweep with caches hot. | ~0.04 ms |
-| **Initial attr evaluation** | Same polish burst on the 498-rule attr workload (half active). | ~31–32 ms |
-| **Class change** | Toggling `.on` on 40 widgets (5 props each) via `setProperty("class", ...)` + `processEvents`. | ~43–45 ms, **200 writes** (40×5) |
-| **Attr change** | Same burst via `[active=true]` (`setProperty("active", True)` on 40 widgets, 5 props each). Directly comparable to class change. | ~42–43 ms, **200 writes** (40×5) |
-| **Class-animation frames** | 15 synthetic frames after class change. Each frame advances 40×5 running `QVariantAnimation`s via `setCurrentTime` and processes the batched flush. Trigger-phase deferred work is drained before timing. | ~130–137 ms, **600 writes** (15×40) |
-| **Hover-animation frames** | Same 15 frames but driven by `:hover` (pseudo-state injected directly into the widget context; bypasses event routing). | ~112–116 ms, **~645 writes** (approximate) |
-| **Resize storm** | Resizing 100 radius-styled noise widgets and handling `on_resize` (border-radius clamp path: queue + forced polish + snap + flush). | ~21–23 ms, **100 writes**, 100 resized |
+`--filter class` selects a subset; `--list` lists keys. A filtered run can compare
+against a full baseline. `--repeat 1 --warmup 0` is a smoke check, not a reliable
+performance measurement. `--json` emits a complete JSON document on stdout;
+progress and Qt diagnostics go to stderr. `.benchmarks/` is ignored by Git.
 
-Baseline:
+Display a saved report as the usual results table without running benchmarks:
 
-```
-Scenario                  Mean  Median     Min     Max  Stdev  Runs  Extra
-----------------------  ------  ------  ------  ------  -----  ----  -----------------------
-Cold rule matching        1.58    1.55    1.49    1.77   0.08    10  321w 458r
-Warm cached matching      0.05    0.05    0.04    0.06   0.01    10  321w 458r
-Initial evaluation       28.65   28.60   28.31   29.16   0.26    10  321w 458r
-Cold attr matching        1.54    1.55    1.43    1.67   0.07     7  321w 498r
-Warm attr matching        0.04    0.04    0.04    0.05   0.00    15  321w 498r
-Initial attr evaluation  31.74   31.65   31.46   32.16   0.22     7  321w 498r
-Class change             39.78   39.82   38.73   41.10   0.72    10  200 writes
-Attr change              42.56   42.61   41.76   43.56   0.63     7  200 writes
-Class-animation frames  129.34  130.22  119.01  138.24   4.93    10  600 writes
-Hover-animation frames  106.20  104.56  101.36  112.50   4.32    10  611 writes
-Resize storm             19.99   19.90   19.77   20.43   0.20    10  100 writes, 100 resized
+```powershell
+uv run python -m benchmarks --show .benchmarks/after.json
 ```
 
-`Extra` is an inline column (`writes`, `321w 458r`, `resized`). Baseline write counts confirm the batching:
+## Measurement boundaries
 
-- Class-change: **200** (40×5)
-- Attr-change: **200** (40×5) — same props driven through `[active=true]` instead of `.on`
-- Class-animation: **600** (15×40)
-- Hover: **~611** (15×40 plus animation-completion flushes; approximate — see below)
-- Resize storm: **100** (one snap + flush per resized widget)
+The fixture has 321 widgets and 458 rules (498 for attribute cases). It includes
+40 buttons, nested wrapper/container branches and radius-styled noise labels.
+The cleaned static QSS is applied to the root, alongside the engine rules, so
+style writes and repolishing exercise Qt's stylesheet machinery too.
 
-Frame write counts are approximate, unlike the exact class-change count: real-timer
-animation-completion callbacks race the synthetic `setCurrentTime` ticks, so class/hover
-frames wander around the model from run to run. The resize storm reports `writes`
-alongside `resized`.
+| Key | Timed work |
+| --- | --- |
+| `cold` | One matching pass over all 321 widgets with empty widget/identity caches; rule compilation/index construction and cache clearing are excluded. |
+| `warm` | Matching with primed caches; 100 passes per sample, reported as milliseconds per **one 321-widget pass**. |
+| `attr_cold`, `attr_warm` | Matching plus live attribute predicates, as used by the cascade. Half the 40 buttons have `active=true`. Warm samples use 100 passes and the same per-pass normalization. |
+| `initial`, `attr_initial` | New engine/index construction, 321 delivered Polish events, and queued engine work until settled. Each sample has a fresh tree with static QSS already installed. CSS parsing, tree creation, native first show, and destruction are excluded. |
+| `class_change`, `attr` | A synchronous burst of 40 property changes through Qt's event filter, including repolish and creation of 200 animations. Deferred flushes, layout, painting and animation ticks are excluded. |
+| `hover` | 40 delivered `QHoverEvent` enters through the event filter, including creation of 200 animations. Like the property-change cases, deferred work is excluded. |
+| `class_anim`, `hover_anim` | 15 synthetic frames at 20–300 ms for 40 × 5 animations, including deferred style/layout work and final completion callbacks. Trigger/setup work is excluded. Results are per **15-frame sequence**, not FPS or per-frame latency. |
+| `resize` | One actual resize on each of 100 labels, from 120×30 to 122×34, plus queued clamp/style work. Layouts are frozen beforehand so they cannot undo or multiply the resizes. Each radius must change from 15 to 17 px. |
 
-## Layout
+These are fixed workload regression benchmarks, not exhaustive engine coverage.
+They do not currently measure parsing, hot reload, reparenting, effects, or
+real-time paint/compositor throughput. Class and attribute scenarios also have
+different rule counts; compare each scenario to itself across engine revisions.
 
-```
-benchmarks/
-  __main__.py              # single entry point (uv run python -m benchmarks)
-  run.py                   # alias (uv run python benchmarks/run.py)
-  common.py                # heavy stylesheet + widget hierarchy + write counters
-  runner.py                # timing helpers, table formatting
-  bench_cold_matching.py
-  bench_warm_matching.py
-  bench_initial_eval.py
-  bench_attr_matching.py   # three scenarios: cold / warm / initial with attrs
-  bench_class_change.py
-  bench_attr_change.py
-  bench_class_anim_frames.py
-  bench_hover_frames.py
-  bench_resize_storm.py
-```
+## Repeatability and correctness
 
-Each `bench_*.py` exposes `NAME` and `benchmark(warmup, runs) -> BenchResult`
-(`bench_attr_matching.py` exposes three: cold / warm / initial). The runner imports them via `ALL_BENCHES` in `__main__.py`.
-
-## Notes
-
-- Offscreen is forced in `benchmarks/common.py` via `os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")` before any Qt import. Override by setting the variable before running if you need a visible window.
-- Timings are medians over several runs with `gc.collect()` between runs. Per-frame animation benchmarks (class/hover) use 5 runs by default because they are heavier (each run builds a fresh 321-widget tree).
-- For CI, the suite should stay under a few seconds with `--repeat 2`.
+- Each scenario runs in a fresh Python process. `PYTHONHASHSEED` defaults to `0`
+  for the worker processes, or preserves your explicitly supplied seed.
+- Setup, teardown, correctness checks and garbage collection are outside timing.
+  Cyclic GC is disabled during each timed sample and its previous state restored.
+  Samples have fresh trees/engines; warm matcher caches are deliberately primed.
+- Animation clocks are paused at time zero before processing any queued events.
+  Every synthetic frame seeks all 200 animations explicitly; the wall clock cannot
+  advance them. The last frame includes completion, so write counts need not be
+  exactly 15 × 40. Write counts are diagnostics from a separate untimed sample.
+- Windows use the native Qt platform with `WA_DontShowOnScreen`, avoiding desktop
+  focus/mouse interference. The CLI rejects `offscreen` and `minimal` platforms.
+  No global Qt message handler suppresses errors.
+- Assertions verify fixture sizes, matcher results against an uncached scan,
+  attribute hits/misses, five running properties per button, final animation
+  values and resize clamp changes. Errors fail the run; partial suites are never
+  saved as successful baselines. Run Python normally, without `-O`.
+- JSON retains every sample, summary statistics, warmup counts, workload sizes,
+  source revision/dirty flag, engine and benchmark source hashes, Python/Qt/binding
+  versions, platform, style, font, DPI and hash seed. Comparisons reject changed
+  benchmark code, environment or sampling settings. Engine code/revision changes
+  are expected. Metadata cannot detect every source of system noise.

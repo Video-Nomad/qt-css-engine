@@ -1,28 +1,12 @@
-# pyright: reportPrivateUsage=false
-"""Single entry point for the benchmark suite.
-
-Usage:
-    uv run python -m benchmarks                 # run all benchmarks
-    uv run python -m benchmarks --list          # list available benchmarks
-    uv run python -m benchmarks --filter cold   # run matching benchmarks
-    uv run python -m benchmarks --json          # JSON output
-    uv run python -m benchmarks --repeat 3      # fewer runs (faster)
-    QT_API=pyside6 PYTHONHASHSEED=0 uv run python -m benchmarks  # fixed-hash, PySide6 offscreen
-
-The suite reproduces the baseline workload:
-    458 rules, 321 widgets, 40 widgets animating five properties over 15 frames.
-"""
+"""Run each scenario in a fresh Python process and save comparable results."""
 
 import argparse
-import json
 import os
+import subprocess
 import sys
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
-
-# Ensure offscreen before Qt loads
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from pathlib import Path
 
 from benchmarks import (
     bench_attr_change,
@@ -30,11 +14,13 @@ from benchmarks import (
     bench_class_anim_frames,
     bench_class_change,
     bench_cold_matching,
+    bench_hover_change,
     bench_hover_frames,
     bench_initial_eval,
     bench_resize_storm,
     bench_warm_matching,
 )
+from benchmarks.reporting import Report, comparison_table, environment, read_report, report_json
 from benchmarks.runner import BenchResult, format_table
 
 
@@ -56,118 +42,118 @@ ALL_BENCHES: list[BenchEntry] = [
     BenchEntry("class_change", bench_class_change.NAME, bench_class_change.benchmark),
     BenchEntry("attr", bench_attr_change.NAME, bench_attr_change.benchmark),
     BenchEntry("class_anim", bench_class_anim_frames.NAME, bench_class_anim_frames.benchmark),
+    BenchEntry("hover", bench_hover_change.NAME, bench_hover_change.benchmark),
     BenchEntry("hover_anim", bench_hover_frames.NAME, bench_hover_frames.benchmark),
     BenchEntry("resize", bench_resize_storm.NAME, bench_resize_storm.benchmark),
 ]
 
 
-def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="qt_css_engine benchmark suite (baseline)")
-    p.add_argument("--list", action="store_true", help="list benchmarks and exit")
-    p.add_argument("--filter", type=str, default=None, help="substring filter (e.g. cold, class, hover)")
-    p.add_argument("--json", action="store_true", help="output JSON instead of table")
-    p.add_argument("--repeat", type=int, default=None, help="override default runs per benchmark")
-    p.add_argument("--warmup", type=int, default=None, help="override warmup runs")
-    p.add_argument("-q", "--quiet", action="store_true", help="suppress per-benchmark progress, only print final table")
-    return p.parse_args()
+def positive(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return number
+
+
+def nonnegative(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be at least 0")
+    return number
 
 
 def main() -> None:
-    args = _parse_args()
-
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--list", action="store_true", help="list scenarios and exit")
+    parser.add_argument("--filter", default="", help="case-insensitive substring of key or name")
+    parser.add_argument("--json", action="store_true", help="print only a JSON report to stdout")
+    parser.add_argument("--output", type=Path, help="save a JSON report")
+    parser.add_argument("--show", type=Path, help="print a saved JSON report as a table and exit")
+    parser.add_argument("--compare", type=Path, help="compare medians with a saved report")
+    parser.add_argument("--repeat", type=positive, help="measured samples per scenario")
+    parser.add_argument("--warmup", type=nonnegative, help="discarded warmup samples")
+    parser.add_argument("-q", "--quiet", action="store_true", help="suppress progress on stderr")
+    parser.add_argument("--worker", choices=[entry.key for entry in ALL_BENCHES], help=argparse.SUPPRESS)
+    args = parser.parse_args()
     if args.list:
-        print("Available benchmarks:")
         for entry in ALL_BENCHES:
-            print(f"  {entry.key:12} — {entry.name}")
+            print(f"{entry.key:14} {entry.name}")
         return
-
-    # Select benchmarks
-    selected: list[BenchEntry] = []
-    for entry in ALL_BENCHES:
-        if (
-            args.filter
-            and args.filter.lower() not in entry.key.lower()
-            and args.filter.lower() not in entry.name.lower()
-        ):
-            continue
-        selected.append(entry)
-
+    if args.show:
+        try:
+            report = read_report(args.show)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            parser.error(f"cannot read report: {error}")
+        print(format_table(list(report.results.values())))
+        print("\nAll timings are milliseconds per workload; writes are from a separate untimed sample.")
+        return
+    if os.environ.get("QT_QPA_PLATFORM", "").lower() in {"offscreen", "minimal"}:
+        parser.error("use the native Qt platform; remove QT_QPA_PLATFORM=offscreen/minimal")
+    if args.worker:
+        entry = next(entry for entry in ALL_BENCHES if entry.key == args.worker)
+        options: dict[str, int] = {}
+        if args.repeat is not None:
+            options["runs"] = args.repeat
+        if args.warmup is not None:
+            options["warmup"] = args.warmup
+        result = entry.benchmark(**options)
+        print(report_json(Report(environment(), {entry.key: result})))
+        return
+    selected = [entry for entry in ALL_BENCHES if args.filter.lower() in f"{entry.key} {entry.name}".lower()]
     if not selected:
-        print(f"No benchmarks match filter {args.filter!r}", file=sys.stderr)
-        sys.exit(1)
-
-    quiet: bool = bool(args.quiet)
-
-    if not quiet:
-        print(
-            f"Running {len(selected)} benchmark(s) — QT_API={os.environ.get('QT_API', '(auto)')}, "
-            f"PYTHONHASHSEED={os.environ.get('PYTHONHASHSEED', '(random)')}, "
-            f"QT_QPA_PLATFORM={os.environ.get('QT_QPA_PLATFORM')}"
-        )
-        try:
-            from qt_css_engine.qt_compat._api import USE_PYSIDE6
-
-            binding = "PySide6" if USE_PYSIDE6 else "PyQt6"
-        except Exception:
-            binding = "unknown"
-        print(f"Binding: {binding}\n")
-
-    results: list[BenchResult] = []
+        parser.error(f"no scenarios match {args.filter!r}")
+    try:
+        baseline = read_report(args.compare) if args.compare else None
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        parser.error(f"cannot read baseline: {error}")
+    report = Report({}, {})
+    failures: list[str] = []
+    env = os.environ.copy()
+    env.setdefault("PYTHONHASHSEED", "0")
     for entry in selected:
-        if not quiet:
-            print(f"→ {entry.name} ...", end=" ", flush=True)
-        t0 = time.perf_counter()
-        try:
-            if args.repeat is not None and args.warmup is not None:
-                res = entry.benchmark(warmup=args.warmup, runs=args.repeat)
-            elif args.repeat is not None:
-                res = entry.benchmark(runs=args.repeat)
-            elif args.warmup is not None:
-                res = entry.benchmark(warmup=args.warmup)
-            else:
-                res = entry.benchmark()
-        except Exception as e:
-            if not quiet:
-                print(f"FAILED: {e}")
-            import traceback
-
-            traceback.print_exc()
+        if not args.quiet:
+            print(f"Running {entry.name} ...", file=sys.stderr, flush=True)
+        command = [sys.executable, "-m", "benchmarks", "--worker", entry.key]
+        if args.repeat is not None:
+            command += ["--repeat", str(args.repeat)]
+        if args.warmup is not None:
+            command += ["--warmup", str(args.warmup)]
+        process = subprocess.run(
+            command, cwd=Path(__file__).resolve().parents[1], env=env, capture_output=True, text=True
+        )
+        if process.stderr:
+            print(process.stderr, file=sys.stderr, end="")
+        if process.returncode:
+            failures.append(entry.key)
             continue
-        t1 = time.perf_counter()
-        if not quiet:
-            print(f"{res.median_ms:.2f} ms median (mean {res.mean_ms:.2f} ms, {res.runs} runs, wall {t1 - t0:.1f}s)")
-        results.append(res)
-
-    if not results:
-        print("No results.", file=sys.stderr)
-        sys.exit(1)
-
+        child = Report.from_json(process.stdout)
+        if report.metadata and any(
+            report.metadata.get(key) != value for key, value in child.metadata.items() if key != "recorded_at"
+        ):
+            parser.exit(1, "Code or environment changed during the run; no report saved.\n")
+        report.metadata = child.metadata
+        report.results.update(child.results)
+    if failures:
+        # Never save a partial run as a successful baseline.
+        parser.exit(1, f"Failed scenarios: {', '.join(failures)}; no report saved.\n")
+    comparison = None
+    if baseline:
+        try:
+            comparison = comparison_table(baseline, report)
+        except ValueError as error:
+            parser.error(str(error))
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(report_json(report) + "\n", encoding="utf-8")
     if args.json:
-        payload = [
-            {
-                "name": r.name,
-                "mean_ms": r.mean_ms,
-                "median_ms": r.median_ms,
-                "min_ms": r.min_ms,
-                "max_ms": r.max_ms,
-                "stdev_ms": r.stdev_ms,
-                "runs": r.runs,
-                "extra": r.extra,
-            }
-            for r in results
-        ]
-        print(json.dumps(payload, indent=2))
+        print(report_json(report))
+        if comparison:
+            print(comparison, file=sys.stderr)
     else:
-        if not quiet:
-            print()
-        print(format_table(results))
-        if not quiet:
-            print("\nNotes:")
-            print("- Baseline workload: 458 rules, 321 widgets, 40 widgets × 5 props × 15 frames.")
-            print("- Baseline write counts: class-change 200 (40×5), class-animation 600 (15×40), hover ~645.")
-            print("- Run with PYTHONHASHSEED=0 uv run python -m benchmarks for fixed-hash reproducibility.")
-            print("- Offscreen: QT_QPA_PLATFORM=offscreen is set by default in")
-            print("  benchmarks/common.py; override if you need a visible window.")
+        print(format_table(list(report.results.values())))
+        print("\nAll timings are milliseconds per workload; writes are from a separate untimed sample.")
+        if comparison:
+            print("\n" + comparison)
 
 
 if __name__ == "__main__":

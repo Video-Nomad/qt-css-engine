@@ -1,56 +1,25 @@
-# pyright: reportPrivateUsage=false
 """Shared fixtures for the benchmark suite.
 
-Heavy workload mirrors the PR description:
+Deterministic heavy workload:
 - 458 rules
 - 321 widgets
 - 40 widgets animating five properties over 15 synthetic frames
 
-All benchmarks run offscreen (QT_QPA_PLATFORM=offscreen) and use a
-single QApplication instance.
+Uses the native Qt platform with windows kept off the desktop through
+WA_DontShowOnScreen. No environment variables or message handlers are replaced.
 """
 
-import os
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
-# Must be set before any Qt import.
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.warning=false")
-
-# Install a Qt message handler that silences the offscreen
-# "This plugin does not support propagateSizeHints()" spam which is
-# triggered by layout resizes during the benchmark hierarchy setup.
-# The handler is installed at import time so it covers hierarchy
-# creation as well as the timed sections. We keep output clean by
-# suppressing that specific warning and not re-emitting other Qt
-# messages during the benchmark run (they are not relevant to the
-# baseline workload).
-try:
-    from qt_css_engine.qt_compat.QtCore import qInstallMessageHandler  # noqa: E402
-
-    def _bench_message_handler(*args: object) -> None:  # type: ignore[no-untyped-def]
-        try:
-            msg = str(args[-1]) if args else ""
-            if "propagateSizeHints" in msg:
-                return
-        except Exception:
-            return
-        # Suppress other Qt messages during benchmarks to keep output clean.
-        return
-
-    try:
-        qInstallMessageHandler(_bench_message_handler)
-    except Exception:
-        pass
-except Exception:
-    pass
-
-from qt_css_engine.css.parser import extract_rules  # noqa: E402
-from qt_css_engine.qt_compat.QtWidgets import (  # noqa: E402
+from qt_css_engine.css.parser import extract_rules
+from qt_css_engine.qt_compat import qt_delete
+from qt_css_engine.qt_compat.QtCore import QCoreApplication, QEvent, Qt
+from qt_css_engine.qt_compat.QtWidgets import (
     QApplication,
     QFrame,
     QLabel,
@@ -68,12 +37,18 @@ if TYPE_CHECKING:
 # QApplication singleton
 # ---------------------------------------------------------------------------
 
+_app: QApplication | None = None
+
 
 def get_app() -> QApplication:
+    global _app
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
     assert isinstance(app, QApplication)
+    # PyQt destroys QApplication (and every window) when its last Python
+    # reference disappears. PySide and pytest's session fixture can mask this.
+    _app = app
     return app
 
 
@@ -232,8 +207,9 @@ def create_heavy_hierarchy(
     num_anim: int = 40,
     total_widgets: int = 321,
     active_every: int = 0,
+    qss: str = "",
 ) -> HeavyHierarchy:
-    """Create an offscreen widget tree with *total_widgets* widgets.
+    """Create a native, logically visible widget tree without a desktop window.
 
     When *active_every* > 0, every Nth animated widget gets
     `active=true`, so attr-selector workloads exercise both the
@@ -242,8 +218,11 @@ def create_heavy_hierarchy(
     Caller is responsible for deleting root via qt_delete or deleteLater.
     """
     app = get_app()
+    if total_widgets < 2 + 3 * num_anim:
+        raise ValueError("total_widgets must fit the animated branches")
 
     root = QFrame()
+    root.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
     root.setObjectName("bench-root")
     root.resize(800, 600)
     layout = QVBoxLayout(root)
@@ -326,10 +305,13 @@ def create_heavy_hierarchy(
         if len(all_widgets) >= total_widgets:
             break
 
-    # Trim if over (due to pair logic)
-    all_widgets = all_widgets[:total_widgets]
+    assert len(all_widgets) == total_widgets
+    assert len(root.findChildren(QWidget)) + 1 == total_widgets
 
-    # Show offscreen (required for polish/style to work, but no visible window)
+    # Install the static half too: repolish/layout costs otherwise bear little
+    # resemblance to an application using extract_rules(). Keep it tree-local.
+    root.setStyleSheet(qss)
+    # Native polish/layout semantics without focus or physical mouse interference.
     root.show()
     app.processEvents()
 
@@ -349,17 +331,21 @@ def build_engine_and_widgets(
     num_anim: int = 40,
     total_widgets: int = 321,
     total_rules: int = 458,
+    num_attr: int = 0,
+    active_every: int = 0,
 ) -> EngineBundle:
     """Convenience: build stylesheet, engine and widget tree together."""
     from qt_css_engine import TransitionEngine
 
-    css = build_heavy_stylesheet(num_anim=num_anim, total_rules=total_rules)
-    _, rules = extract_rules(css)
-    assert len(rules) == total_rules, f"expected {total_rules} rules, got {len(rules)}"
+    css = build_heavy_stylesheet(num_anim=num_anim, total_rules=total_rules, num_attr=num_attr)
+    qss, rules = extract_rules(css)
+    assert len(rules) == total_rules + num_attr
 
-    hierarchy = create_heavy_hierarchy(num_anim=num_anim, total_widgets=total_widgets)
+    hierarchy = create_heavy_hierarchy(
+        num_anim=num_anim, total_widgets=total_widgets, active_every=active_every, qss=qss
+    )
 
-    engine = TransitionEngine(rules, startup_delay_ms=0)
+    engine = TransitionEngine(rules, parent=hierarchy.root, startup_delay_ms=0)
     # Install as event filter so class-change polish path is exercised
     get_app().installEventFilter(engine)
 
@@ -393,11 +379,8 @@ def count_writes() -> Generator[dict[str, int]]:
         counter["count"] += 1
         orig(self, sheet)
 
-    QWidget.setStyleSheet = counting_setStyleSheet  # type: ignore[method-assign,assignment]
-    try:
+    with patch.object(QWidget, "setStyleSheet", counting_setStyleSheet):
         yield counter
-    finally:
-        QWidget.setStyleSheet = orig  # type: ignore[method-assign,assignment]
 
 
 def drain_deferred_work(app: QApplication, engine: TransitionEngine) -> None:
@@ -409,10 +392,35 @@ def drain_deferred_work(app: QApplication, engine: TransitionEngine) -> None:
     steady-state ticks (animation completion callbacks at the final frame are
     real per-frame work and stay inside the timed section).
     """
-    for _ in range(3):
+    # Only the actual event loop flushes work. Never rescue a broken scheduler
+    # by directly invoking its private flush method.
+    idle_turns = 0
+    for _ in range(100):
         app.processEvents()
-        try:
-            engine._flush_polish_queue()
-        except Exception:
-            pass
-    app.processEvents()
+        if not engine.polish.pending and not any(ctx.style_flush_pending for ctx in engine.store.contexts.values()):
+            # Style writes can post layout/paint events without an engine flag.
+            # Let these run too before declaring the trigger or frame settled.
+            idle_turns += 1
+            if idle_turns == 3:
+                return
+        else:
+            idle_turns = 0
+    raise RuntimeError("Engine deferred work did not settle after 100 event-loop turns")
+
+
+@contextmanager
+def engine_bundle(*, num_attr: int = 0, active_every: int = 0) -> Generator[EngineBundle]:
+    bundle = build_engine_and_widgets(num_attr=num_attr, active_every=active_every)
+    try:
+        yield bundle
+    finally:
+        # Destroy widgets while their engine is alive, then its remaining Qt
+        # children. Drain deferred deletion explicitly, including on failure.
+        app = get_app()
+        app.removeEventFilter(bundle.engine)
+        for ctx in bundle.engine.store.contexts.values():
+            for animation in ctx.active_animations.values():
+                animation.anim.stop()
+        qt_delete(bundle.root)
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        app.processEvents()
