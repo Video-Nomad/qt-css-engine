@@ -1,7 +1,7 @@
 from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
-from qt_css_engine.css_parser import extract_rules
+from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.qt_compat.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QPushButton
 
 CSS = """
@@ -88,7 +88,7 @@ def test_nested_layout_size_cache_invalidation(qtbot: QtBot) -> None:
     # If the layout cache bug is present, the layout will distribute leftover space
     # and the engine will mistakenly calculate the target width as ~13px or 24px.
     # If fixed, it should correctly calculate the unconstrained natural width (7px).
-    ctx = engine._ctx(target_btn)  # pyright: ignore[reportPrivateUsage]
+    ctx = engine.get_context(target_btn)  # pyright: ignore[reportPrivateUsage]
     assert "width" in ctx.active_animations
 
     anim_obj = ctx.active_animations["width"]

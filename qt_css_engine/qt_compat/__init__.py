@@ -9,27 +9,29 @@ from typing import Any
 
 from ._api import USE_PYSIDE6
 
+# Bound once at import. is_qobject_alive() runs on every animation tick of every animated
+# property, and re-executing the import machinery there showed up on the hot path.
+if USE_PYSIDE6:
+    from shiboken6 import Shiboken as _binding  # type: ignore
+
+    _delete = _binding.delete  # type: ignore
+    _is_alive = _binding.isValid  # type: ignore
+else:
+    from PyQt6 import sip as _binding  # type: ignore
+
+    _delete = _binding.delete  # type: ignore
+
+    def _is_alive(obj: Any) -> bool:
+        return not _binding.isdeleted(obj)  # type: ignore
+
 
 def qt_delete(obj: Any) -> None:
     """Synchronously delete a Qt C++ object, equivalent to C++ delete."""
-    if USE_PYSIDE6:
-        from shiboken6 import Shiboken
-
-        Shiboken.delete(obj)  # type: ignore
-    else:
-        from PyQt6 import sip
-
-        sip.delete(obj)  # type: ignore
+    _delete(obj)
 
 
 def is_qobject_alive(obj: Any) -> bool:
     """True if the underlying C++ QObject still exists."""
     if obj is None:
         return False
-    if USE_PYSIDE6:
-        from shiboken6 import Shiboken
-
-        return bool(Shiboken.isValid(obj))  # type: ignore
-    from PyQt6 import sip
-
-    return not sip.isdeleted(obj)  # type: ignore
+    return bool(_is_alive(obj))

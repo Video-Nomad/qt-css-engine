@@ -2,7 +2,7 @@
 
 A CSS animation engine for PyQt6/PySide6 that extends Qt's static stylesheet system (QSS) with dynamic CSS transitions and extra properties like `box-shadow`, `opacity` and CSS gradients. Qt's stylesheet engine has no concept of time or interpolation — this project implements an out-of-band animation system that intercepts `transition:` declarations from a stylesheet, tracks widget pseudo-states (hover, pressed, focus), and drives smooth property animations via Qt's animation framework. Dynamic class change is also supported so `.btn` -> `.btn.active` -> `.btn.other-state` will animate based on the `transition` property.
 
-All that is required is to install `TransitionEngine` as an event filter and it will take care of the rest.
+All that is required is to install `TransitionEngine` as an event filter and it will take care of the rest. It can be installed directly on a QApplication or any child QWidget.
 
 CSS Hot reload is supported via `TransitionEngine.reload_rules(new_rules)`
 

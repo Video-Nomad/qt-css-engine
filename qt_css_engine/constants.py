@@ -37,9 +37,8 @@ BORDER_WIDTH_KEYWORDS: frozenset[str] = frozenset({"thin", "medium", "thick"})
 # Qt QSS pseudo-classes that map to a canonical pseudo-class tracked by the engine.
 PSEUDO_ALIASES: dict[str, str] = {}
 
-# Animation pseudo-classes the engine knows about, in descending priority order.
+# Animation pseudo-classes the engine knows about.
 ANIMATION_PSEUDOS: frozenset[str] = frozenset({":pressed", ":hover", ":focus", ":checked", ":clicked", ":active"})
-ANIMATION_PSEUDO_PRIORITY: tuple[str, ...] = (":clicked", ":pressed", ":hover", ":focus", ":checked", ":active")
 
 # ---------------------------------------------------------------------------
 # Engine property sets
@@ -68,9 +67,11 @@ ENGINE_EVENT_TYPES: frozenset[QEvent.Type] = PSEUDO_EVENTS | frozenset(
     {
         QEvent.Type.Polish,
         QEvent.Type.DynamicPropertyChange,
+        QEvent.Type.ParentChange,
         QEvent.Type.WindowActivate,
         QEvent.Type.WindowDeactivate,
         QEvent.Type.Leave,
+        QEvent.Type.Resize,
     }
 )
 
@@ -144,11 +145,6 @@ NON_NEGATIVE_PROPS: frozenset[str] = frozenset(
         "border-top-right-radius",
         "border-bottom-left-radius",
         "border-bottom-right-radius",
-        "padding",
-        "padding-top",
-        "padding-right",
-        "padding-bottom",
-        "padding-left",
         "font-size",
         "font-weight",
         "spacing",

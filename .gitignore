@@ -8,6 +8,7 @@ wheels/
 .venv
 .pytest_cache
 .ruff_cache
+.benchmarks/
 .vscode
 .python-version
 

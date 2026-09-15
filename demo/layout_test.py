@@ -13,8 +13,6 @@ This version mirrors the relevant parts of the real Bar setup:
 - `QGridLayout` with left/center/right container frames
 """
 
-# pyright: reportPrivateUsage=false
-
 import logging
 import os
 import sys
@@ -40,33 +38,50 @@ os.environ["CSS_ENGINE_EVENT_LOGGING"] = "1"
 REPRO_CSS = """
 QWidget { background-color: #1a1a1a; color: white; font-size: 13px; }
 
-.bar { background-color: #1a1a1a; }
-
-.container { background-color: transparent; }
+.container { background-color: transparent; box-shadow: 1px 1px 0px black; }
 
 .glazewm-workspaces .ws-btn {
-    color: #d8d8d8;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    margin-left: 1px;
-    padding: 1px 4px;
-    transition: width 300ms linear;
+    margin: 2 4px;
+    width:22px;
+    height:22px;
+    font-size: 16px;
+    color: #d3c6aa;
+    border: 2px solid #5e666a;
+    border-radius: 99px;
+    background-color: red;
+    box-shadow: 0px 0px 10px black;
+    opacity: 1.0;
+    transition-property: all, opacity;
+    transition-duration: 600ms, 50ms;
+    transition-timing-function: cubic-bezier(0.175, 1.2, 0.32, 1.2), ease;
+}
+
+.glazewm-workspaces .ws-btn:hover {
+    margin: 2 4px;
+    width:40px;
+    height:40px;
+    border-radius: 99px;
+    border: 2px solid #a7c080;
+    box-shadow: 0px 0px 4px #a7c080;
+    opacity: 1.0;
 }
 
 .glazewm-workspaces .ws-btn.active_populated,
 .glazewm-workspaces .ws-btn.active_empty {
-    background: #525252;
+    border-radius: 99px;
+    background: transparent;
 }
 
 .glazewm-workspaces .ws-btn.focused_populated,
 .glazewm-workspaces .ws-btn.focused_empty {
+    border-radius: 99px;
     width: 50px;
     background: #2d7ef7;
 }
 
 .glazewm-workspaces .ws-btn.empty,
 .glazewm-workspaces .ws-btn.empty .label {
+    border-radius: 99px;
     color: #9d9d9d;
 }
 
@@ -111,9 +126,9 @@ class ReproBar(QWidget):
         self._target_screen = bar_screen
         self._padding = {"left": 8, "right": 8, "top": 6, "bottom": 6}
         self._dimensions = {"height": 60}
-        self._bar_frame = QFrame(self)
-        self._bar_frame.setProperty("class", "bar")
-        self._bar_frame.installEventFilter(self)
+        self.bar_frame = QFrame(self)
+        self.bar_frame.setProperty("class", "bar")
+        self.bar_frame.installEventFilter(self)
         self.setWindowTitle("Repro: QGridLayout bar, class-toggle width")
         self.position_bar(init=True)
 
@@ -131,7 +146,7 @@ class ReproBar(QWidget):
         bar_height = self._dimensions["height"]
         bar_x, bar_y = self.bar_pos()
         self.setGeometry(bar_x, bar_y, bar_width, bar_height)
-        self._bar_frame.setGeometry(0, 0, bar_width, bar_height)
+        self.bar_frame.setGeometry(0, 0, bar_width, bar_height)
         print(
             f"[bar] position_bar init={init} screen={screen_width}x{screen_height} "
             f"bar=({bar_x},{bar_y},{bar_width},{bar_height})"
@@ -142,11 +157,10 @@ class ReproBar(QWidget):
         self.position_bar()
 
 
-
 def print_ws_state(engine: TransitionEngine, ws_buttons: list[QPushButton], header: str) -> None:
     print(f"\n=== {header} ===")
     for btn in ws_buttons:
-        ctx = engine._contexts.get(id(btn))
+        ctx = engine.store.contexts.get(id(btn))
         anim = ctx.active_animations.get("width") if ctx is not None else None
         state = "none"
         end_val = None
@@ -166,7 +180,7 @@ def print_ws_state(engine: TransitionEngine, ws_buttons: list[QPushButton], head
 
 
 def attach_width_debug(engine: TransitionEngine, btn: QPushButton) -> None:
-    ctx = engine._contexts.get(id(btn))
+    ctx = engine.store.contexts.get(id(btn))
     if ctx is None:
         return
     anim = ctx.active_animations.get("width")
@@ -183,8 +197,8 @@ def attach_width_debug(engine: TransitionEngine, btn: QPushButton) -> None:
         )
 
     def on_finished(button: QPushButton = btn) -> None:
-        ctx_now = engine._contexts.get(id(button))
-        css_props = {} if ctx_now is None else {k: v for k, v in ctx_now.css_anim_props.items() if 'width' in k}
+        ctx_now = engine.store.contexts.get(id(button))
+        css_props = {} if ctx_now is None else {k: v for k, v in ctx_now.css_anim_props.items() if "width" in k}
         print(
             f"[done] btn={button.text()} class={class_str(button)!r} width={button.width()} "
             f"hint={button.sizeHint().width()} min={button.minimumWidth()} "
@@ -207,7 +221,7 @@ def main() -> None:
     assert (ps := app.primaryScreen()) is not None
     bar = ReproBar(ps)
     bar.setProperty("class", "bar")
-    bar_frame = bar._bar_frame
+    bar_frame = bar.bar_frame
 
     # QGridLayout with 3 columns matching parent app
     grid = QGridLayout()
@@ -280,11 +294,11 @@ def main() -> None:
         old_btn = ws_buttons[old_idx]
         new_btn = ws_buttons[new_idx]
 
-        assert (layout := bar._bar_frame.layout()) is not None
+        assert (layout := bar.bar_frame.layout()) is not None
         print_ws_state(engine, ws_buttons, "before switch")
         print(
-            f"[bar] before switch outer={bar.geometry()} frame={bar._bar_frame.geometry()} "
-            f"layout_hint={layout.sizeHint().width() if bar._bar_frame.layout() else 'n/a'}"
+            f"[bar] before switch outer={bar.geometry()} frame={bar.bar_frame.geometry()} "
+            f"layout_hint={layout.sizeHint().width() if bar.bar_frame.layout() else 'n/a'}"
         )
         print(f"\n>>> switching focused workspace {old_btn.text()} -> {new_btn.text()}")
         old_btn.setProperty("class", "ws-btn active_populated")

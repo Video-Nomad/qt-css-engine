@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .css_parser import extract_rules
+    from .css.parser import extract_rules
     from .engine import TransitionEngine
 
 __all__ = [
@@ -17,7 +17,7 @@ def __getattr__(name: str) -> object:
 
         return TransitionEngine
     if name == "extract_rules":
-        from .css_parser import extract_rules
+        from .css.parser import extract_rules
 
         return extract_rules
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
