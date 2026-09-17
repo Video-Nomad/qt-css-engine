@@ -1696,6 +1696,56 @@ def test_transition_all(_app: QApplication) -> None:
     destroy(widget)
 
 
+@pytest.mark.parametrize(
+    "transitions",
+    [
+        "transition: all 300ms ease;",
+        "transition: all 100ms ease; transition-duration: 300ms;",
+        "transition-property: color; transition-duration: 100ms; transition: all 300ms ease;",
+    ],
+)
+def test_accumulated_all_preserves_radius_animation(_app: QApplication, transitions: str) -> None:
+    engine = make_engine(
+        """
+        .btn { background-color: #2e2e38; color: white; border-radius: 8px; TRANSITIONS }
+        .btn:hover { border-radius: 99px; }
+        .btn-container .btn {
+            transition: background-color 300ms ease, color 200ms linear, border-color 600ms ease;
+            border: 2px solid #3a7a3a;
+        }
+        .btn-container .btn:hover { background-color: #2a6a2a; color: #ff8080; border-color: #ff5555; }
+        """.replace("TRANSITIONS", transitions)
+    )
+    parent = QWidget()
+    parent.setProperty("class", "btn-container")
+    widget = QWidget(parent)
+    widget.setProperty("class", "btn")
+    widget.resize(160, 50)
+    try:
+        hover_widget(engine, widget)
+        ctx = engine.get_context(widget)
+        for prop, duration in (("background-color", 300), ("color", 200), ("border-top-color", 600)):
+            assert ctx.active_animations[prop].anim.duration() == duration
+        radius = ctx.active_animations["border-top-left-radius"]
+        assert isinstance(radius, GenericPropertyAnimation)
+        assert radius.anim.duration() == 300
+        assert radius.anim.state() == QAbstractAnimation.State.Running
+        radius.anim.setCurrentTime(150)
+        assert 8 < radius.current_val < 25
+        radius.anim.setCurrentTime(300)
+        assert radius.current_val == 25
+
+        ctx.active_pseudos.clear()
+        engine.evaluate_widget_state(widget)
+        assert radius.anim.state() == QAbstractAnimation.State.Running
+        radius.anim.setCurrentTime(150)
+        assert 8 < radius.current_val < 25
+        radius.anim.setCurrentTime(300)
+        assert radius.current_val == 8
+    finally:
+        destroy(parent)
+
+
 # ---------------------------------------------------------------------------
 # cubic-bezier: regex extraction
 # ---------------------------------------------------------------------------

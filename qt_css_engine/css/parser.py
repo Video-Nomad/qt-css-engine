@@ -163,13 +163,20 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
                 continue
             name = decl.name.lower()
             if name == "transition":
+                entries: list[tuple[str, int, str, int]] = []
                 for segment in _split_by_comma(decl.value):
                     result = _parse_transition_segment(segment)
                     if result:
-                        prop, duration_ms, easing, delay_ms = result
-                        norm_prop = _normalize_prop(prop)
-                        for lh in transition_longhands(norm_prop):
-                            transitions.append(TransitionSpec(lh, duration_ms, easing, delay_ms))
+                        entries.append(result)
+                if entries:
+                    # Shorthands accumulate; following longhands edit only this
+                    # declaration's lists, retaining any unspecified components.
+                    # Keep property shorthands intact until timing lists are paired.
+                    transitions.extend(_combine_transition_longhands(_t_props, _t_durations, _t_easings, _t_delays))
+                    _t_props = [entry[0] for entry in entries]
+                    _t_durations = [entry[1] for entry in entries]
+                    _t_easings = [entry[2] for entry in entries]
+                    _t_delays = [entry[3] for entry in entries]
             elif name == "transition-property":
                 _t_props = _parse_transition_property_list(decl.value)
             elif name == "transition-duration":
@@ -182,8 +189,7 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
                 norm = _normalize_prop(name)
                 props.update(expand_shorthand(norm, translate_gradients(_serialize_value(decl.value))))
 
-        if _t_props is not None or _t_durations is not None or _t_easings is not None or _t_delays is not None:
-            transitions = _combine_transition_longhands(_t_props, _t_durations, _t_easings, _t_delays)
+        transitions.extend(_combine_transition_longhands(_t_props, _t_durations, _t_easings, _t_delays))
 
         for selector in (s.strip() for s in raw_selector.split(",")):
             base, pseudo_set = split_selector(selector)
