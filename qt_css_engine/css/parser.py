@@ -38,6 +38,11 @@ def _serialize_value(tokens: list[Node]) -> str:
     return tinycss2.serialize(tokens).strip()
 
 
+def _is_none(tokens: list[Any]) -> bool:
+    significant = [t for t in tokens if t.type not in ("whitespace", "comment")]
+    return len(significant) == 1 and significant[0].type == "ident" and significant[0].value.lower() == "none"
+
+
 def _split_by_comma(tokens: list[Any]) -> list[list[Any]]:
     parts: list[list[Any]] = []
     current: list[Any] = []
@@ -152,6 +157,7 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
         decls = tinycss2.parse_blocks_contents(raw_rule.content, skip_comments=True, skip_whitespace=True)
 
         transitions: list[TransitionSpec] = []
+        resets_transitions = False
         props: dict[str, str] = {}
         _t_props: list[str] | None = None
         _t_durations: list[int] | None = None
@@ -163,11 +169,24 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
                 continue
             name = decl.name.lower()
             if name == "transition":
+                if _is_none(decl.value):
+                    transitions.clear()
+                    resets_transitions = True
+                    _t_props, _t_durations, _t_easings, _t_delays = [], [0], ["ease"], [0]
+                    continue
                 entries: list[tuple[str, int, str, int]] = []
                 for segment in _split_by_comma(decl.value):
                     result = _parse_transition_segment(segment)
                     if result:
                         entries.append(result)
+                if any(entry[0].lower() == "none" for entry in entries):
+                    # `none` may carry timing, but cannot share a property list.
+                    if len(entries) == 1 and len(_split_by_comma(decl.value)) == 1:
+                        transitions.clear()
+                        resets_transitions = True
+                        _, duration, easing, delay = entries[0]
+                        _t_props, _t_durations, _t_easings, _t_delays = [], [duration], [easing], [delay]
+                    continue
                 if entries:
                     # Shorthands accumulate; following longhands edit only this
                     # declaration's lists, retaining any unspecified components.
@@ -178,6 +197,11 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
                     _t_easings = [entry[2] for entry in entries]
                     _t_delays = [entry[3] for entry in entries]
             elif name == "transition-property":
+                if _is_none(decl.value):
+                    transitions.clear()
+                    resets_transitions = True
+                    _t_props = []
+                    continue
                 _t_props = _parse_transition_property_list(decl.value)
             elif name == "transition-duration":
                 _t_durations = _parse_time_list(decl.value)
@@ -207,6 +231,7 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
                     has_attrs="[" in base,
                     specificity=compute_specificity(base, pseudo_set),
                     order=order,
+                    resets_transitions=resets_transitions and not is_subcontrol,
                 )
             )
 

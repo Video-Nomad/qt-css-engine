@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from qt_css_engine.constants import BORDER_RADIUS_PROPS, EFFECT_PROPS
+from qt_css_engine.constants import BORDER_RADIUS_PROPS, EFFECT_PROPS, SIZE_PROPS
 from qt_css_engine.css.properties import is_animatable
 from qt_css_engine.engine.evaluation import ResolvedRuleState
 from qt_css_engine.geometry.clamp import clamp_border_radius, target_border_radius_box_size
@@ -30,12 +30,17 @@ class CascadeEvaluator:
         base_best: dict[str, tuple[tuple[int, int, int], int]] = {}
         target_best: dict[str, tuple[tuple[int, int, int], int, int]] = {}
         trans_best: dict[str, tuple[tuple[int, int, int], int, int]] = {}
+        reset_best: tuple[tuple[int, int, int], int, int] | None = None
         pseudos = ctx.active_pseudos
         matched = rules if rules is not None else self._matcher.matching_rules(widget)
         for rule in matched:
             attrs_match = self._matcher.rule_attrs_match(widget, rule) if rule.has_attrs else True
             rule_in_target = attrs_match and (not rule.pseudo_set or rule.pseudo_set <= pseudos)
             priority = sum(self._priority.get(p, 0) for p in rule.pseudo_set) if rule_in_target else -1
+            if rule_in_target and rule.resets_transitions:
+                reset_key = (rule.specificity, priority, rule.order)
+                if reset_best is None or reset_key > reset_best:
+                    reset_best = reset_key
             for trans in rule.transitions:
                 state.animated_props.add(trans.prop)
                 if rule_in_target:
@@ -58,8 +63,30 @@ class CascadeEvaluator:
                     if key >= target_best.get(prop, ((-1, -1, -1), -1, -1)):
                         state.target_props[prop] = val
                         target_best[prop] = key
+        if reset_best is not None:
+            state.transitions_reset = True
+            # Specs at the reset's own rank occur after it in the parsed block.
+            # Filter before expanding `all`, so erased explicit specs cannot win.
+            state.transitions = {
+                prop: spec for prop, spec in state.transitions.items() if trans_best[prop] >= reset_best
+            }
         if "all" in state.animated_props:
             self.expand_all(ctx, state)
+        if reset_best is not None:
+            # Retain ownership for snapping, including values left by rules that
+            # no longer match. Removing timing must not leave stale inline styles.
+            state.animated_props.update(
+                prop
+                for prop in set(ctx.css_anim_props) | set(ctx.active_animations) | set(ctx.pending_delays)
+                if is_animatable(prop)
+                and (
+                    prop in state.base_props
+                    or prop in state.target_props
+                    or prop in SIZE_PROPS
+                    or prop == "color"
+                    or prop.endswith("-color")
+                )
+            )
         for prop in EFFECT_PROPS:
             if prop in state.base_props or prop in state.target_props:
                 state.animated_props.add(prop)

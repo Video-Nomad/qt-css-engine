@@ -10,6 +10,8 @@ Subcontrols (e.g `::item`, `::handle`) are not supported because they are not re
 
 This engine was made primarily for use in [YASB](https://github.com/amnweb/yasb) project and this will be the main focus for now, but it can be integrated into any Qt application.
 
+This is not a full CSS3 spec port. It has some very important Qt-specific differences, especially when it comes to transition property accumulation vs overriding.
+
 **WARNING: This project is still in early development, very experimental and is not ready for production use. There will be bugs and breaking changes.**
 
 ## Python and Qt version
@@ -93,7 +95,25 @@ transition-timing-function: ease, linear;
 transition-delay: 0ms, 50ms;
 ```
 
-Longhands override the shorthand when both are declared in the same block. Values cycle per the CSS spec when list lengths differ.
+### Accumulation and cancellation
+
+Longhands update the previous shorthands instead of overriding them completely.
+
+Transition declarations accumulate across matching rules. Explicit property timings take precedence over `all`. `all` supplies timing for the remaining supported properties.
+
+`transition: none` or `transition-property: none` will disable the previous transitions. Specifying a new transition will re-enable it for that property.
+
+```css
+.btn {
+    transition: all 300ms;
+}
+.btn.quiet {
+    transition: none;
+    transition: color 150ms; /* Only color animates. */
+}
+```
+
+Timing-only longhands after `none` do not enable properties.
 
 ### Time units
 

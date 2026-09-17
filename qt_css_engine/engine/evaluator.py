@@ -78,7 +78,11 @@ class WidgetEvaluator:
             if cause.snaps_transitions:
                 matched = rules if rules is not None else self._engine.matcher.matching_rules(widget)
                 if not any(
-                    rule.transitions or rule.has_effect_props or rule.has_cursor_prop or rule.has_border_radius_props
+                    rule.transitions
+                    or rule.resets_transitions
+                    or rule.has_effect_props
+                    or rule.has_cursor_prop
+                    or rule.has_border_radius_props
                     for rule in matched
                 ):
                     return
@@ -126,6 +130,10 @@ class WidgetEvaluator:
         for prop in ev.state.animated_props:
             if self.apply_prop(ev, prop):
                 needs_style_update = True
+        if ev.state.transitions_reset and ev.ctx.clicked_anim_props - ev.state.transitions.keys():
+            # Stopping an animation does not emit finished; release a clicked
+            # cycle whose remaining properties were snapped by the reset.
+            self._engine.finish_clicked_activation(ev.widget, ev.ctx)
         return needs_style_update
 
     # ------------------------------------------------------------------
@@ -137,7 +145,11 @@ class WidgetEvaluator:
         if not cause.snaps_transitions or ctx.css_anim_props or ctx.active_animations:
             return False
         return not any(
-            rule.transitions or rule.has_effect_props or rule.has_cursor_prop or rule.has_border_radius_props
+            rule.transitions
+            or rule.resets_transitions
+            or rule.has_effect_props
+            or rule.has_cursor_prop
+            or rule.has_border_radius_props
             for rule in self._engine.matcher.matching_rules(widget)
         )
 
@@ -153,6 +165,12 @@ class WidgetEvaluator:
     def apply_prop(self, ev: Evaluation, prop: str) -> bool:
         """Drive one property through resolve -> snap/animate. Returns True if a style flush is needed."""
         self._engine.delays.cancel(ev.ctx, prop)
+        if ev.state.transitions_reset and prop not in ev.state.transitions:
+            ev.ctx.class_anim_props.discard(prop)
+            callback = ev.ctx.class_anim_callbacks.pop(prop, None)
+            animation = ev.ctx.active_animations.get(prop)
+            if callback is not None and animation is not None:
+                safe_disconnect(animation.anim.finished, callback)
         if self._is_class_anim_blocked(ev, prop):
             return False
         if self._is_post_clean_noop(ev, prop):
