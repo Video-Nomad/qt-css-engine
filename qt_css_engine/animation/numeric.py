@@ -188,8 +188,13 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
                 pass
 
     def update_spec(self, duration_ms: int, easing_curve: QEasingCurve) -> None:
-        self.anim.setDuration(duration_ms)
-        self.anim.setEasingCurve(easing_curve)
+        # Retiming emits a stale tick; block it.
+        blocked = self.anim.blockSignals(True)
+        try:
+            self.anim.setDuration(duration_ms)
+            self.anim.setEasingCurve(easing_curve)
+        finally:
+            self.anim.blockSignals(blocked)
 
     def snap_to(self, value_raw: str, box_size: tuple[float, float] | None = None) -> None:
         self._target_box_size = None

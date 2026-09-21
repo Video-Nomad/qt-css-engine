@@ -245,6 +245,7 @@ def main() -> None:
         ("easing", "Easing"),
         ("timing", "Delay and duration"),
         ("transition-none", "Transition: none"),
+        ("dual", "Base + target timing"),
         ("size", "Size and shape"),
         ("dynamic", "Dynamic classes"),
         ("nesting", "Nesting and scope"),
@@ -553,7 +554,36 @@ def main() -> None:
     content_layout.addWidget(reset_card)
     cards["transition-none"] = reset_card
 
-    # ------------------------------------------------- 7. size & shape
+    # ------------------------------------------------- 7. base + target transition
+    dual_card, dual_body = make_card(
+        "Base + target transition",
+        "The transition is defined on both selectors: hover-in uses the :hover timing "
+        "(fast ease-in); hover-out falls back to the base timing (slow ease-out).",
+    )
+    # Stacked in a column: size transitions need vertical stacking so the
+    # horizontal growth (padding, min/max-width, width) isn't constrained
+    # by siblings competing for the same row space.
+    dual_col_frame = QFrame()
+    dual_col_layout = QVBoxLayout(dual_col_frame)
+    dual_col_layout.setContentsMargins(0, 0, 0, 0)
+    dual_col_layout.setSpacing(14)
+    dual_examples = [
+        ("dual-btn", "Background", "bg #7c80c7 → #417800: in 200ms ease-in, out 1s ease-out."),
+        ("dual-pad-btn", "Padding", "padding 10/16 → 20/150px: in 200ms ease-in, out 1s ease-out."),
+        ("dual-minmax-btn", "Min/max width", "110 → 350px via min/max-width: in 200ms, out 1s."),
+        ("dual-width-btn", "Width", "110 → 350px via plain width: in 200ms, out 1s."),
+    ]
+    for cls, text, hint in dual_examples:
+        dual_btn = QPushButton(text)
+        dual_btn.setProperty("class", cls)
+        dual_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        dual_col_layout.addWidget(dual_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        dual_col_layout.addWidget(make_hint(hint))
+    dual_body.addWidget(dual_col_frame)
+    content_layout.addWidget(dual_card)
+    cards["dual"] = dual_card
+
+    # ------------------------------------------------- 8. size & shape
     size_card, size_body = make_card(
         "Size & shape morph",
         "Width constraints, padding, border and type metrics all interpolate and re-lay-out smoothly.",
@@ -601,7 +631,7 @@ def main() -> None:
     content_layout.addWidget(size_card)
     cards["size"] = size_card
 
-    # ------------------------------------------------- 8. dynamic classes
+    # ------------------------------------------------- 9. dynamic classes
     dyn_card, dyn_body = make_card(
         "Dynamic classes",
         "Changing `class` re-runs the cascade and animates. Click the tabs, cycle the row, or watch the timer.",
@@ -660,7 +690,7 @@ def main() -> None:
     content_layout.addWidget(dyn_card)
     cards["dynamic"] = dyn_card
 
-    # ------------------------------------------------- 9. nesting & scope
+    # ------------------------------------------------- 10. nesting & scope
     nest_card, nest_body = make_card(
         "Nesting & scope",
         "Descendant selectors match through the tree. Hover the containers — children react to ancestor state.",
@@ -728,7 +758,7 @@ def main() -> None:
     content_layout.addWidget(nest_card)
     cards["nesting"] = nest_card
 
-    # ------------------------------------------------- 10. attributes & specificity
+    # ------------------------------------------------- 11. attributes & specificity
     attr_card, attr_body = make_card(
         "Attributes & specificity",
         "Dynamic properties drive styles via [attr=value] (bare or quoted). "
@@ -773,7 +803,7 @@ def main() -> None:
     content_layout.addWidget(attr_card)
     cards["attrs"] = attr_card
 
-    # ------------------------------------------------- 11. playground
+    # ------------------------------------------------- 12. playground
     play_card, play_body = make_card(
         "Playground",
         "Runtime widgets, visibility toggles and window focus. New widgets are picked up via Polish events.",
