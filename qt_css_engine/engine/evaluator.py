@@ -30,7 +30,7 @@ from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve
 from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.cursor import apply_cursor as apply_cursor_style
-from qt_css_engine.style.effects import apply_shadow_to_widget
+from qt_css_engine.style.effects import apply_shadow_to_widget, is_box_shadow_disabled
 from qt_css_engine.utils.color import parse_color
 from qt_css_engine.utils.easing import resolve_easing_curve
 from qt_css_engine.utils.parsing import parse_css_numeric
@@ -116,6 +116,36 @@ class WidgetEvaluator:
         if self.apply_prop(ev, prop):
             self._engine.writer.flush_now(widget, ctx)
 
+    def refresh_shadow_policy(self, widget: QWidget) -> None:
+        """Apply a runtime shadow opt-out change without retiming unrelated animations."""
+        if is_box_shadow_disabled(widget):
+            apply_shadow_to_widget(widget, None, self._engine.effect_priority)
+            ctx = self._engine.store.get(widget)
+            if ctx is None:
+                return
+            self._engine.delays.cancel(ctx, "box-shadow")
+            animation = ctx.active_animations.get("box-shadow")
+            callback = ctx.clicked_anim_callbacks.pop("box-shadow", None)
+            if callback is not None and animation is not None:
+                safe_disconnect(animation.anim.finished, callback)
+            ctx.clicked_anim_props.discard("box-shadow")
+            if animation is not None:
+                self._remove_orphan(ctx, ResolvedRuleState(), "box-shadow", animation)
+            ctx.style_box_props.pop("box-shadow", None)
+            opacity = ctx.active_animations.get("opacity")
+            if isinstance(opacity, OpacityAnimation):
+                opacity.refresh_effect()
+            if ":clicked" in ctx.active_pseudos:
+                self._engine.finish_clicked_activation(widget, ctx)
+            return
+        if not self._engine.should_evaluate(widget):
+            return
+        ctx = self._engine.get_context(widget)
+        state = self._collect_state(widget, ctx)
+        if "box-shadow" in state.animated_props:
+            # Re-enable at the current CSS target; no transition from a stale shadow.
+            self.apply_prop(Evaluation(widget, ctx, state, EvaluationCause.POLISH), "box-shadow")
+
     def _collect_state(
         self, widget: QWidget, ctx: WidgetState, *, rules: list[StyleRule] | None = None
     ) -> ResolvedRuleState:
@@ -156,7 +186,13 @@ class WidgetEvaluator:
     def collect_rule_state(
         self, widget: QWidget, ctx: WidgetState, *, rules: list[StyleRule] | None = None
     ) -> ResolvedRuleState:
-        return self._engine.cascade.collect(widget, ctx, rules=rules)
+        state = self._engine.cascade.collect(widget, ctx, rules=rules)
+        if is_box_shadow_disabled(widget):
+            state.base_props.pop("box-shadow", None)
+            state.target_props.pop("box-shadow", None)
+            state.transitions.pop("box-shadow", None)
+            state.animated_props.discard("box-shadow")
+        return state
 
     # ------------------------------------------------------------------
     # Per-property decision: resolve -> snap/animate

@@ -47,6 +47,9 @@ ANIMATION_PSEUDOS: frozenset[str] = frozenset({":pressed", ":hover", ":focus", "
 # Properties handled via QGraphicsEffect regardless of whether a transition is defined.
 EFFECT_PROPS: frozenset[str] = frozenset({"opacity", "box-shadow"})
 
+# Per-widget opt-out; Qt dynamic properties are not inherited by child widgets.
+DISABLE_BOX_SHADOW_PROPERTY = "cssEngineDisableShadow"
+
 # Size properties that fall back to widget.sizeHint() when no explicit CSS value exists.
 SIZE_PROPS: frozenset[str] = frozenset({"width", "height", "min-width", "max-width", "min-height", "max-height"})
 

@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from qt_css_engine.constants import ENGINE_EVENT_TYPES, PSEUDO_EVENTS
+from qt_css_engine.constants import DISABLE_BOX_SHADOW_PROPERTY, ENGINE_EVENT_TYPES, PSEUDO_EVENTS
 from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.qt_compat.QtCore import QEvent, QObject, Qt
 from qt_css_engine.qt_compat.QtGui import QMouseEvent
@@ -59,6 +59,8 @@ class EventRouter:
                 if EventRouter.is_class_property_change(event):
                     engine.on_class_change(widget)
                 elif (attr_name := EventRouter.changed_property_name(event)) is not None:
+                    if attr_name == DISABLE_BOX_SHADOW_PROPERTY:
+                        engine.on_shadow_policy_change(widget)
                     if attr_name in engine.matcher.tracked_attrs:
                         engine.on_attr_change(widget)
             case QEvent.Type.ParentChange:

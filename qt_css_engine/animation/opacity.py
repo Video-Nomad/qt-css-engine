@@ -27,6 +27,10 @@ class OpacityAnimation(QObject):
         self.anim.setEasingCurve(easing_curve)
         self.anim.valueChanged.connect(self._on_tick)
 
+    def refresh_effect(self) -> None:
+        """Reapply the current opacity without changing the animation's timing."""
+        apply_opacity_to_widget(self.widget, self._current_val, self.effect_priority)
+
     def _on_tick(self, val: float) -> None:
         if not is_qobject_alive(self.widget):
             self.anim.stop()

@@ -240,6 +240,10 @@ class TransitionEngine(QObject):
         """
         class_change_handler.handle_class_change(self, widget)
 
+    def on_shadow_policy_change(self, widget: QWidget) -> None:
+        """Refresh the widget's shadow when cssEngineDisableShadow changes."""
+        self.evaluator.refresh_shadow_policy(widget)
+
     def on_parent_change(self, widget: QWidget) -> None:
         """Handle reparenting; ancestor-dependent selectors may now match differently."""
         parent_change_handler.handle_parent_change(self, widget)
