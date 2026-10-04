@@ -466,7 +466,7 @@ def test_reload_reeval_clears_stale_effect_when_no_match(_app: QApplication, qtb
     widget.setProperty("class", "other")
     engine.matcher.clear_caches()
     engine.get_context(widget).active_animations.clear()
-    reload_handler.reeval_reload_widgets_deferred(engine, {widget}, set())
+    reload_handler.reeval_reload_widgets_deferred(engine, {widget}, {})
     assert widget.graphicsEffect() is None
     destroy(widget)
 
@@ -486,7 +486,7 @@ def test_reload_reeval_skips_running_effect_widget(_app: QApplication) -> None:
     anim_obj = ctx.active_animations["opacity"]
     assert isinstance(anim_obj, OpacityAnimation)
     assert anim_obj.anim.state() == anim_obj.anim.State.Running
-    reload_handler.reeval_reload_widgets_deferred(engine, {widget}, set())
+    reload_handler.reeval_reload_widgets_deferred(engine, {widget}, {})
     anim_obj.anim.stop()
     destroy(widget)
 
@@ -567,7 +567,7 @@ def test_on_resize_suppressed_noop(_app: QApplication) -> None:
         engine.polish.queue.clear()
         engine.polish.pending = False
         engine.on_resize(widget)
-        assert widget not in engine.polish.queue
+        assert id(widget) not in engine.polish.queue
     finally:
         destroy(widget)
 

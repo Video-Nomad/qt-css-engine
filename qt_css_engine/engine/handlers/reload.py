@@ -1,6 +1,8 @@
 """Reload handler — hot-reload CSS rules."""
 
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING
+from weakref import WeakSet, WeakValueDictionary
 
 from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
@@ -44,11 +46,11 @@ def reload_rules(engine: TransitionEngine, rules: list[StyleRule]) -> None:
     engine.matcher.rules = rules
     engine.matcher.build_quick_filters()
     engine.matcher.clear_caches()
-    animated_widget_ids = clear_reload_styles(engine, animated_widgets)
-    effect_only_widgets = {widget for widget in animated_widgets if id(widget) not in inline_widget_ids}
+    prev_animated_widgets = clear_reload_styles(engine, animated_widgets)
+    effect_only_widgets = WeakSet(widget for widget in animated_widgets if id(widget) not in inline_widget_ids)
     QTimer.singleShot(
         0,
-        lambda: reeval_reload_widgets_deferred(engine, effect_only_widgets, animated_widget_ids),
+        lambda: reeval_reload_widgets_deferred(engine, effect_only_widgets, prev_animated_widgets),
     )
 
 
@@ -65,12 +67,12 @@ def reset_context_for_reload(engine: TransitionEngine, ctx: WidgetState) -> None
     lifecycle_handler.stop_animations(engine, ctx, clear_effects=True)
 
 
-def clear_reload_styles(engine: TransitionEngine, animated_widgets: set[QWidget]) -> set[int]:
-    """Remove engine-owned inline styles and return the ids reset during the reload."""
-    animated_widget_ids: set[int] = set()
+def clear_reload_styles(engine: TransitionEngine, animated_widgets: set[QWidget]) -> WeakValueDictionary[int, QWidget]:
+    """Remove engine-owned inline styles and weakly track widgets reset during the reload."""
+    prev_animated_widgets: WeakValueDictionary[int, QWidget] = WeakValueDictionary()
     for widget in animated_widgets:
         try:
-            animated_widget_ids.add(id(widget))
+            prev_animated_widgets[id(widget)] = widget
             ctx = engine.get_context(widget)
             ctx.css_anim_props.clear()
             ctx.active_pseudos.clear()
@@ -81,7 +83,7 @@ def clear_reload_styles(engine: TransitionEngine, animated_widgets: set[QWidget]
     app = QApplication.instance()
     if isinstance(app, QApplication):
         for widget in app.allWidgets():
-            if id(widget) in animated_widget_ids:
+            if prev_animated_widgets.get(id(widget)) is widget:
                 continue
             try:
                 ctx = engine.store.contexts.get(id(widget))
@@ -91,11 +93,11 @@ def clear_reload_styles(engine: TransitionEngine, animated_widgets: set[QWidget]
                     widget.setStyleSheet("")
             except RuntimeError:
                 pass
-    return animated_widget_ids
+    return prev_animated_widgets
 
 
 def reeval_reload_widgets_deferred(
-    engine: TransitionEngine, effect_only_widgets: set[QWidget], prev_animated_ids: set[int]
+    engine: TransitionEngine, effect_only_widgets: Iterable[QWidget], prev_animated_widgets: Mapping[int, QWidget]
 ) -> None:
     """Re-evaluate widgets that need engine-managed state after a hot-reload stylesheet change."""
     for widget in effect_only_widgets:
@@ -117,7 +119,7 @@ def reeval_reload_widgets_deferred(
         return
     for widget in app.allWidgets():
         ctx = engine.store.contexts.get(id(widget))
-        if id(widget) in prev_animated_ids:
+        if prev_animated_widgets.get(id(widget)) is widget:
             continue
         if ctx is not None and ctx.active_animations:
             continue

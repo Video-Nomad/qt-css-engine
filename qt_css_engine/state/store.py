@@ -1,19 +1,21 @@
-"""Widget state store — owns contexts and widget mirrors.
+"""Widget state store — owns contexts and observes widget lifetimes.
 
 Pure storage only. Lifecycle wiring (destroyed signal, animation teardown)
 lives in TransitionEngine, which owns this store.
 """
+
+from weakref import WeakValueDictionary
 
 from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.state.widget_state import WidgetState
 
 
 class WidgetStore:
-    """Maps id(widget) -> WidgetState plus id -> widget mirror."""
+    """Maps id(widget) -> WidgetState plus a non-owning widget mirror."""
 
     def __init__(self) -> None:
         self.contexts: dict[int, WidgetState] = {}
-        self.widgets: dict[int, QWidget] = {}
+        self.widgets: WeakValueDictionary[int, QWidget] = WeakValueDictionary()
 
     def get(self, widget: QWidget) -> WidgetState | None:
         return self.contexts.get(id(widget))

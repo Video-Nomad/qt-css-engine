@@ -1,6 +1,7 @@
 """Scoped stylesheet writer — batched flush with dedup."""
 
 import itertools
+import weakref
 from collections.abc import Callable
 
 from qt_css_engine.constants import BORDER_RADIUS_PROPS
@@ -55,10 +56,18 @@ class StyleWriter:
         ctx.style_flush_pending = True
         wid = id(widget)
         get_ctx = self._get_ctx
-        if get_ctx is None:
-            QTimer.singleShot(0, lambda: self._flush_captured(widget, ctx))
-        else:
-            QTimer.singleShot(0, lambda: self.flush_scheduled(widget, wid, get_ctx))
+        widget_ref = weakref.ref(widget)
+
+        def flush() -> None:
+            target = widget_ref()
+            if target is None:
+                ctx.style_flush_pending = False
+            elif get_ctx is None:
+                self._flush_captured(target, ctx)
+            else:
+                self.flush_scheduled(target, wid, get_ctx)
+
+        QTimer.singleShot(0, flush)
 
     def _flush_captured(self, widget: QWidget, ctx: WidgetState) -> None:
         if not ctx.style_flush_pending:

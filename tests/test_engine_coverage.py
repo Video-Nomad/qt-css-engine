@@ -1235,7 +1235,7 @@ def test_on_polish_skipped_during_internal_write(_app: QApplication) -> None:
     engine.polish.queue.clear()
     engine.on_polish(widget)
 
-    assert widget not in engine.polish.queue
+    assert id(widget) not in engine.polish.queue
 
 
 def test_on_polish_skipped_when_active_animation_running(_app: QApplication) -> None:
@@ -1253,7 +1253,7 @@ def test_on_polish_skipped_when_active_animation_running(_app: QApplication) -> 
     engine.polish.queue.clear()
     engine.on_polish(widget)
 
-    assert widget not in engine.polish.queue
+    assert id(widget) not in engine.polish.queue
     destroy(widget)
 
 
@@ -1280,8 +1280,8 @@ def test_polish_queue_batches_multiple_widgets(_app: QApplication) -> None:
     engine.on_polish(w2)
 
     assert engine.polish.pending
-    assert w1 in engine.polish.queue
-    assert w2 in engine.polish.queue
+    assert id(w1) in engine.polish.queue
+    assert id(w2) in engine.polish.queue
 
     destroy(w1)
     destroy(w2)

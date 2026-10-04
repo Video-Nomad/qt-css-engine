@@ -1,6 +1,6 @@
 """Shadow animation — delegates to geometry/clamp and style/effects."""
 
-from qt_css_engine.animation.base import StepsReversalMixin
+from qt_css_engine.animation.base import StepsReversalMixin, WidgetAnimation
 from qt_css_engine.qt_compat import is_qobject_alive
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QObject, QVariantAnimation
 from qt_css_engine.qt_compat.QtWidgets import QWidget
@@ -8,7 +8,7 @@ from qt_css_engine.style.effects import apply_shadow_to_widget
 from qt_css_engine.utils.color import ShadowParams, lerp_shadow, parse_box_shadow, shadow_as_transparent
 
 
-class BoxShadowHandle(StepsReversalMixin, QObject):
+class BoxShadowHandle(StepsReversalMixin, WidgetAnimation):
     def __init__(
         self,
         widget: QWidget,
@@ -18,8 +18,7 @@ class BoxShadowHandle(StepsReversalMixin, QObject):
         parent: QObject | None = None,
         effect_priority: str = "opacity",
     ) -> None:
-        super().__init__(parent)
-        self.widget = widget
+        super().__init__(widget, parent)
         self.effect_priority = effect_priority
         self._current: ShadowParams | None = parse_box_shadow(initial_raw)
         self._start: ShadowParams | None = None
@@ -36,7 +35,8 @@ class BoxShadowHandle(StepsReversalMixin, QObject):
         self.anim.finished.connect(self._on_finished)
 
     def _on_tick(self, t: float) -> None:
-        if not is_qobject_alive(self.widget):
+        widget = self._widget_ref()
+        if widget is None or not is_qobject_alive(widget):
             self.anim.stop()
             return
         start = self._start
@@ -48,7 +48,7 @@ class BoxShadowHandle(StepsReversalMixin, QObject):
         if end is None:
             end = shadow_as_transparent(start)
         self._current = lerp_shadow(start, end, t)
-        apply_shadow_to_widget(self.widget, self._current, self.effect_priority)
+        apply_shadow_to_widget(widget, self._current, self.effect_priority)
 
     def _on_finished(self) -> None:
         self._current = self._end

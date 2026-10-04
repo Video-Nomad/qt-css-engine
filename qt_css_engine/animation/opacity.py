@@ -1,5 +1,6 @@
 """Opacity animation."""
 
+from qt_css_engine.animation.base import WidgetAnimation
 from qt_css_engine.qt_compat import is_qobject_alive
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QObject, QVariantAnimation
 from qt_css_engine.qt_compat.QtWidgets import QWidget
@@ -7,7 +8,7 @@ from qt_css_engine.style.effects import apply_opacity_to_widget
 from qt_css_engine.utils.parsing import parse_css_val
 
 
-class OpacityAnimation(QObject):
+class OpacityAnimation(WidgetAnimation):
     def __init__(
         self,
         widget: QWidget,
@@ -17,8 +18,7 @@ class OpacityAnimation(QObject):
         parent: QObject | None = None,
         effect_priority: str = "opacity",
     ) -> None:
-        super().__init__(parent)
-        self.widget = widget
+        super().__init__(widget, parent)
         self.effect_priority = effect_priority
         self._current_val = float(initial_val)
         apply_opacity_to_widget(widget, self._current_val, self.effect_priority)
@@ -32,11 +32,12 @@ class OpacityAnimation(QObject):
         apply_opacity_to_widget(self.widget, self._current_val, self.effect_priority)
 
     def _on_tick(self, val: float) -> None:
-        if not is_qobject_alive(self.widget):
+        widget = self._widget_ref()
+        if widget is None or not is_qobject_alive(widget):
             self.anim.stop()
             return
         self._current_val = val
-        apply_opacity_to_widget(self.widget, val, self.effect_priority)
+        apply_opacity_to_widget(widget, val, self.effect_priority)
 
     def update_spec(self, duration_ms: int, easing_curve: QEasingCurve) -> None:
         # Retiming emits a stale tick; block it.

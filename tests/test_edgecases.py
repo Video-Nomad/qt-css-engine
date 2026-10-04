@@ -799,11 +799,11 @@ def test_parent_change_no_descendant_queues_only_matching(_app: QApplication) ->
         engine.polish.queue.clear()
         engine.polish.pending = False
         engine.on_parent_change(widget)
-        assert widget in engine.polish.queue
+        assert id(widget) in engine.polish.queue
         engine.polish.queue.clear()
         engine.polish.pending = False
         engine.on_parent_change(other)
-        assert other not in engine.polish.queue
+        assert id(other) not in engine.polish.queue
     finally:
         destroy(widget)
         destroy(other)
@@ -945,7 +945,7 @@ def test_on_resize_guards(_app: QApplication) -> None:
     w0.setProperty("class", "box")
     try:
         engine_plain.on_resize(w0)
-        assert w0 not in engine_plain.polish.queue
+        assert id(w0) not in engine_plain.polish.queue
     finally:
         destroy(w0)
 
@@ -956,7 +956,7 @@ def test_on_resize_guards(_app: QApplication) -> None:
         # No matching radius rule → no queue
         other = QWidget()
         engine.on_resize(other)
-        assert other not in engine.polish.queue
+        assert id(other) not in engine.polish.queue
         destroy(other)
         # Running animation → no queue
         engine2 = make_engine("""
@@ -969,7 +969,7 @@ def test_on_resize_guards(_app: QApplication) -> None:
         assert "border-top-left-radius" in _anims(engine2, w2)
         engine2.polish.queue.clear()
         engine2.on_resize(w2)
-        assert w2 not in engine2.polish.queue
+        assert id(w2) not in engine2.polish.queue
         destroy(w2)
     finally:
         destroy(widget)

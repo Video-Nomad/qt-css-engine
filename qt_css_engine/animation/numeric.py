@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from qt_css_engine.animation.base import StepsReversalMixin
+from qt_css_engine.animation.base import StepsReversalMixin, WidgetAnimation
 from qt_css_engine.constants import BORDER_RADIUS_PROPS, NON_NEGATIVE_PROPS, SIZE_PROPS
 from qt_css_engine.geometry.clamp import clamp_border_radius, target_border_radius_box_size
 from qt_css_engine.qt_compat import is_qobject_alive
@@ -14,7 +14,7 @@ from qt_css_engine.style.writer import StyleWriter, scoped_anim_style
 from qt_css_engine.utils.parsing import parse_css_numeric
 
 
-class GenericPropertyAnimation(StepsReversalMixin, QObject):
+class GenericPropertyAnimation(StepsReversalMixin, WidgetAnimation):
     def __init__(
         self,
         widget: QWidget,
@@ -28,8 +28,7 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
         box_props: dict[str, str] | None = None,
         style_flush_callback: Callable[[QWidget, WidgetState], None] | None = None,
     ) -> None:
-        super().__init__(parent)
-        self.widget = widget
+        super().__init__(widget, parent)
         self.prop = prop
         self.unit = unit
         self._ctx = ctx
@@ -122,7 +121,8 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
         self._request_style_flush(props, update_shadow=self.prop in SIZE_PROPS)
 
     def _on_tick(self, val: int | float | None) -> None:
-        if not is_qobject_alive(self.widget):
+        widget = self._widget_ref()
+        if not is_qobject_alive(widget):
             self.anim.stop()
             return
         if val is None:
@@ -163,6 +163,9 @@ class GenericPropertyAnimation(StepsReversalMixin, QObject):
             pass
 
     def _on_finished(self) -> None:
+        widget = self._widget_ref()
+        if not is_qobject_alive(widget):
+            return
         if self.prop in BORDER_RADIUS_PROPS and self._target_box_size is not None:
             try:
                 self._on_tick(self.anim.endValue())

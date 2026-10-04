@@ -34,7 +34,7 @@ from qt_css_engine.style.effects import apply_shadow_to_widget, is_box_shadow_di
 from qt_css_engine.utils.color import parse_color
 from qt_css_engine.utils.easing import resolve_easing_curve
 from qt_css_engine.utils.parsing import parse_css_numeric
-from qt_css_engine.utils.qt_helpers import safe_disconnect
+from qt_css_engine.utils.qt_helpers import safe_disconnect, weak_widget_callback
 
 if TYPE_CHECKING:
     from qt_css_engine.css.model import StyleRule, TransitionSpec
@@ -416,27 +416,31 @@ class WidgetEvaluator:
         gen = ctx.class_anim_gen
         wid = id(widget)
 
-        def _on_done(_w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen) -> None:
-            c = self._engine.store.contexts.get(_wid)
-            if c and _gen == c.class_anim_gen and _p in c.class_anim_props:
-                c.class_anim_props.discard(_p)
-                self.evaluate(_w, cause=EvaluationCause.CLASS_ANIMATION_FINISH)
+        def _on_done(target: QWidget) -> None:
+            c = self._engine.store.contexts.get(wid)
+            if c and gen == c.class_anim_gen and prop in c.class_anim_props:
+                c.class_anim_props.discard(prop)
+                self.evaluate(target, cause=EvaluationCause.CLASS_ANIMATION_FINISH)
 
-        self._replace_finished_callback(anim_obj, prop, ctx.class_anim_callbacks, _on_done)
+        self._replace_finished_callback(
+            anim_obj, prop, ctx.class_anim_callbacks, weak_widget_callback(widget, _on_done)
+        )
 
     def _wire_clicked_callback(self, widget: QWidget, ctx: WidgetState, prop: str, anim_obj: Animation) -> None:
         """Track :clicked anims so the pseudo clears once the last one finishes."""
         gen = ctx.clicked_anim_gen
         wid = id(widget)
 
-        def _on_done(_w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen) -> None:
-            c = self._engine.store.contexts.get(_wid)
-            if c and _gen == c.clicked_anim_gen and _p in c.clicked_anim_props:
-                c.clicked_anim_props.discard(_p)
+        def _on_done(target: QWidget) -> None:
+            c = self._engine.store.contexts.get(wid)
+            if c and gen == c.clicked_anim_gen and prop in c.clicked_anim_props:
+                c.clicked_anim_props.discard(prop)
                 if not c.clicked_anim_props:
-                    self._engine.deactivate_clicked(_w, _wid, _gen)
+                    self._engine.deactivate_clicked(target, wid, gen)
 
-        self._replace_finished_callback(anim_obj, prop, ctx.clicked_anim_callbacks, _on_done)
+        self._replace_finished_callback(
+            anim_obj, prop, ctx.clicked_anim_callbacks, weak_widget_callback(widget, _on_done)
+        )
 
     @staticmethod
     def _replace_finished_callback(
@@ -581,21 +585,21 @@ class WidgetEvaluator:
         """Schedule prop's animation to start after delay_ms."""
         wid = id(widget)
 
-        def _fire(_w: QWidget = widget, _p: str = prop, _wid: int = wid) -> None:
-            c = self._engine.store.contexts.get(_wid)
+        def _fire(target: QWidget) -> None:
+            c = self._engine.store.contexts.get(wid)
             if c is not None:
-                c.pending_delays.pop(_p, None)
+                self._engine.delays.cancel(c, prop)
             else:
                 try:
-                    self._engine.delays.cancel(ctx, _p)
+                    self._engine.delays.cancel(ctx, prop)
                 except RuntimeError:
                     pass
             try:
-                self.fire_delayed_prop(_w, _p)
+                self.fire_delayed_prop(target, prop)
             except RuntimeError:
                 pass
 
-        self._engine.delays.schedule(ctx, prop, delay_ms, _fire)
+        self._engine.delays.schedule(ctx, prop, delay_ms, weak_widget_callback(widget, _fire))
 
     def _snap_to_target(self, ev: Evaluation, prop: str, resolved: ResolvedProperty) -> bool:
         """Write the target value instantly. Returns True if a style flush is needed."""

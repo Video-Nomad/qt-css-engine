@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from qt_css_engine.animation.base import StepsReversalMixin
+from qt_css_engine.animation.base import StepsReversalMixin, WidgetAnimation
 from qt_css_engine.qt_compat import is_qobject_alive
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QObject, QVariantAnimation
 from qt_css_engine.qt_compat.QtGui import QColor
@@ -13,7 +13,7 @@ from qt_css_engine.style.writer import scoped_anim_style
 from qt_css_engine.utils.color import lerp_oklab_premul, parse_color, to_oklab_premul
 
 
-class ColorAnimation(StepsReversalMixin, QObject):
+class ColorAnimation(StepsReversalMixin, WidgetAnimation):
     def __init__(
         self,
         widget: QWidget,
@@ -25,8 +25,7 @@ class ColorAnimation(StepsReversalMixin, QObject):
         ctx: WidgetState | None = None,
         style_flush_callback: Callable[[QWidget, WidgetState], None] | None = None,
     ) -> None:
-        super().__init__(parent)
-        self.widget = widget
+        super().__init__(widget, parent)
         self.prop = prop
         self._ctx = ctx
         self._style_flush_callback = style_flush_callback
@@ -63,7 +62,8 @@ class ColorAnimation(StepsReversalMixin, QObject):
             update_shadow_ancestor(self.widget)
 
     def _on_tick(self, t: float) -> None:
-        if not is_qobject_alive(self.widget):
+        widget = self._widget_ref()
+        if not is_qobject_alive(widget):
             self.anim.stop()
             return
         self.current_color = lerp_oklab_premul(self._start_oklab, self._end_oklab, t)
@@ -73,6 +73,9 @@ class ColorAnimation(StepsReversalMixin, QObject):
 
     def _on_finished(self) -> None:
         """Flush the final color synchronously so it doesn't lag one frame"""
+        widget = self._widget_ref()
+        if not is_qobject_alive(widget):
+            return
         props = self._props
         ctx = self._ctx
         if ctx is None:

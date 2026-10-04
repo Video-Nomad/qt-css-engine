@@ -253,7 +253,7 @@ def test_reload_clear_styles_swallow_deleted_widget() -> None:
     destroy(widget)
     # Pass the deleted wrapper explicitly → setStyleSheet raises → swallowed
     out = reload_handler.clear_reload_styles(engine, {widget})
-    assert wid in out or wid not in out  # no crash either way
+    assert out.get(wid) is widget
 
 
 def test_reload_clear_second_loop_runtimeerror_swallowed(_app: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -272,7 +272,7 @@ def test_reload_clear_second_loop_runtimeerror_swallowed(_app: QApplication, mon
     # so the second loop reaches it and hits the RuntimeError guard.
     monkeypatch.setattr(widget, "setStyleSheet", _boom)
     out = reload_handler.clear_reload_styles(engine, set())
-    assert isinstance(out, set)
+    assert not out
     monkeypatch.undo()
     destroy(widget)
 
@@ -285,7 +285,7 @@ def test_reload_reeval_dead_widget_swallowed() -> None:
     widget.setProperty("class", "box")
     wid = id(widget)
     destroy(widget)
-    reload_handler.reeval_reload_widgets_deferred(engine, {widget}, set())
+    reload_handler.reeval_reload_widgets_deferred(engine, {widget}, {})
     assert wid is not None
 
 
@@ -300,7 +300,7 @@ def test_reload_reeval_no_app_returns(monkeypatch: pytest.MonkeyPatch) -> None:
             return None
 
     monkeypatch.setattr(reload_handler, "QApplication", _FakeQApp)
-    reload_handler.reeval_reload_widgets_deferred(engine, set(), set())
+    reload_handler.reeval_reload_widgets_deferred(engine, set(), {})
     reload_handler.reeval_border_radius_widgets_after_reload(engine)
     # Also hit the no-flag early return with an engine lacking border-radius
     plain_engine = make_engine(".box { opacity: 0.5; }")

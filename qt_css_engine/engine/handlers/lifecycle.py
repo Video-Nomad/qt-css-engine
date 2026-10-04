@@ -1,11 +1,13 @@
 """Widget lifecycle — destroy teardown and animation release."""
 
 import logging
+import weakref
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
+from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.effects import apply_shadow_to_widget
 from qt_css_engine.utils.qt_helpers import safe_disconnect
@@ -16,9 +18,28 @@ if TYPE_CHECKING:
 event_logger = logging.getLogger("qt_css_engine.event")
 
 
-def on_widget_destroyed(engine: TransitionEngine, widget: object) -> None:
-    """Remove all engine state for a destroyed widget and stop its animations."""
+def track_widget_lifetime(engine: TransitionEngine, widget: QWidget) -> None:
+    """Clean up once on Qt destruction or wrapper collection, capturing no widget."""
     wid = id(widget)
+    if wid in engine.widget_finalizers:
+        return
+    engine_ref = weakref.ref(engine)
+
+    def cleanup() -> None:
+        owner = engine_ref()
+        if owner is not None:
+            on_widget_destroyed(owner, wid)
+
+    finalizer = weakref.finalize(widget, cleanup)
+    finalizer.atexit = False
+    engine.widget_finalizers[wid] = finalizer
+    widget.destroyed.connect(lambda: finalizer())
+
+
+def on_widget_destroyed(engine: TransitionEngine, wid: int) -> None:
+    """Remove all engine state by ID without needing to retain the widget."""
+    if (finalizer := engine.widget_finalizers.pop(wid, None)) is not None:
+        finalizer.detach()
     engine.connected_checkable_ids.discard(wid)
     engine.matcher.invalidate_widget_id(wid)
     engine.active_rule_widgets.pop(wid, None)
@@ -26,7 +47,7 @@ def on_widget_destroyed(engine: TransitionEngine, widget: object) -> None:
     ctx = engine.store.contexts.pop(wid, None)
     if ctx is None:
         return
-    event_logger.debug("On widget destroyed: %s, %s", type(widget), wid)
+    event_logger.debug("On widget destroyed or collected: %s", wid)
     cancel_all_pending_delays(engine, ctx)
     disconnect_finished_callbacks(ctx, ctx.class_anim_callbacks)
     disconnect_finished_callbacks(ctx, ctx.clicked_anim_callbacks)
