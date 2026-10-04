@@ -16,6 +16,9 @@ from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.engine.evaluation import EvaluationCause
+from qt_css_engine.engine.handlers.class_change import handle_class_change
+from qt_css_engine.engine.handlers.clicked import finish_clicked_activation, prepare_clicked
+from qt_css_engine.engine.handlers.window import handle_window_deactivate
 from qt_css_engine.geometry.clamp import clamp_border_radius
 from qt_css_engine.matching.matcher import RuleMatcher
 from qt_css_engine.qt_compat import qt_delete
@@ -160,7 +163,7 @@ def test_destroyed_cleanup_connection_is_not_duplicated(_app: QApplication) -> N
     hover_widget(engine, widget)
     hover_widget(engine, widget)
 
-    # shiboken6.delete triggers destroyed → _on_widget_destroyed runs once.
+    # shiboken6.delete triggers destroyed → on_widget_destroyed runs once.
     destroy(widget)  # must not raise
 
 
@@ -932,14 +935,14 @@ def test_class_change_skips_unrelated_widget(_app: QApplication) -> None:
     _app.installEventFilter(engine)
 
     unrelated = QWidget()
-    engine.on_class_change(unrelated)  # no class → no match
+    handle_class_change(engine, unrelated)  # no class → no match
 
     assert engine.store.contexts.get(id(unrelated)) is None, (
         "engine must not create a context for a widget that matches no animated rule"
     )
 
     unrelated.setProperty("class", "unrelated")
-    engine.on_class_change(unrelated)  # wrong class → still no match
+    handle_class_change(engine, unrelated)  # wrong class → still no match
 
     assert engine.store.contexts.get(id(unrelated)) is None
 
@@ -962,7 +965,7 @@ def test_class_change_does_not_call_setStyleSheet_on_unmatched_widget(_app: QApp
     _app.processEvents()
 
     before = unrelated.setStyleSheet_count
-    engine.on_class_change(unrelated)
+    handle_class_change(engine, unrelated)
     _app.processEvents()
 
     assert unrelated.setStyleSheet_count == before, "engine must not call setStyleSheet on a widget it does not manage"
@@ -2280,7 +2283,7 @@ def test_delay_widget_destroyed_no_crash(_app: QApplication) -> None:
     hover_widget(engine, widget)
     assert "background-color" in engine.get_context(widget).pending_delays
 
-    destroy(widget)  # must not raise; _on_widget_destroyed cancels timer
+    destroy(widget)  # must not raise; on_widget_destroyed cancels timer
 
     assert id(widget) not in engine.store.contexts
 
@@ -2362,9 +2365,9 @@ def test_delay_class_change_freezes_size_prevents_jump(_app: QApplication) -> No
     widget.setMinimumWidth(50)
     widget.setMaximumWidth(50)
 
-    engine.on_class_change(widget)  # simulate class change to .box.active after setting class
+    handle_class_change(engine, widget)  # simulate class change to .box.active after setting class
     widget.setProperty("class", "box active")
-    engine.on_class_change(widget)
+    handle_class_change(engine, widget)
 
     ctx = engine.get_context(widget)
     # Frozen value must hold the widget at the pre-change size, not the new 150px
@@ -2588,7 +2591,7 @@ def test_window_deactivate_clears_stuck_hover(_app: QApplication) -> None:
     assert ":hover" in engine.get_context(child).active_pseudos
     assert _has_anim(engine, child, "background-color")
 
-    engine.on_window_deactivate(parent)
+    handle_window_deactivate(engine, parent)
 
     assert ":hover" not in engine.get_context(child).active_pseudos
 
@@ -2610,7 +2613,7 @@ def test_window_deactivate_clears_stuck_pressed(_app: QApplication) -> None:
     engine.evaluate_widget_state(child)
     assert ":pressed" in engine.get_context(child).active_pseudos
 
-    engine.on_window_deactivate(parent)
+    handle_window_deactivate(engine, parent)
 
     assert ":pressed" not in engine.get_context(child).active_pseudos
 
@@ -2631,7 +2634,7 @@ def test_window_deactivate_does_not_clear_focus(_app: QApplication) -> None:
     engine.get_context(child).active_pseudos = {":focus"}
     engine.evaluate_widget_state(child)
 
-    engine.on_window_deactivate(parent)
+    handle_window_deactivate(engine, parent)
 
     assert ":focus" in engine.get_context(child).active_pseudos
 
@@ -2898,12 +2901,12 @@ def _click_widget(engine: TransitionEngine, widget: QWidget) -> EvaluationCause:
     """Simulate a mouse press through the full _prepare_clicked → evaluate path."""
     ctx = engine.get_context(widget)
     updated = PseudoMachine.update(ctx.active_pseudos, QEvent.Type.MouseButtonPress)
-    cause = engine.prepare_clicked(widget, ctx, updated)
+    cause = prepare_clicked(engine, widget, ctx, updated)
     if updated != ctx.active_pseudos:
         ctx.active_pseudos = updated
         engine.evaluate_widget_state(widget, cause=cause)
         if cause is EvaluationCause.CLICKED_ACTIVATION:
-            engine.finish_clicked_activation(widget, ctx)
+            finish_clicked_activation(engine, widget, ctx)
     return cause
 
 
@@ -3003,7 +3006,7 @@ def test_clicked_anim_props_pre_populated(_app: QApplication) -> None:
 
     ctx = engine.get_context(widget)
     updated = PseudoMachine.update(ctx.active_pseudos, QEvent.Type.MouseButtonPress)
-    engine.prepare_clicked(widget, ctx, updated)
+    prepare_clicked(engine, widget, ctx, updated)
 
     assert "background-color" in ctx.clicked_anim_props
     assert "color" in ctx.clicked_anim_props

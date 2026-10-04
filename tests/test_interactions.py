@@ -5,6 +5,7 @@ from qt_css_engine import TransitionEngine
 from qt_css_engine.animation.numeric import GenericPropertyAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.css.parser import extract_rules
+from qt_css_engine.engine.handlers.class_change import handle_class_change
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QEvent, QPointF, Qt
 from qt_css_engine.qt_compat.QtGui import QMouseEvent
 from qt_css_engine.qt_compat.QtWidgets import QWidget
@@ -246,7 +247,7 @@ def test_resize_event_does_not_snap_running_size_transition(qtbot: QtBot):
     engine.evaluate_widget_state(widget)
 
     widget.setProperty("class", "box wide")
-    engine.on_class_change(widget)
+    handle_class_change(engine, widget)
 
     ctx = engine.get_context(widget)
     anim = ctx.active_animations.get("width")

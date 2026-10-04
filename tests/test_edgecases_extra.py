@@ -29,6 +29,9 @@ from qt_css_engine.css.model import StyleRule
 from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedRuleState
 from qt_css_engine.engine.evaluator import Evaluation
+from qt_css_engine.engine.handlers.clicked import deactivate_clicked
+from qt_css_engine.engine.handlers.parent_change import handle_parent_change
+from qt_css_engine.engine.handlers.window import handle_window_deactivate
 from qt_css_engine.geometry.box_model import total_border_px
 from qt_css_engine.matching.matcher import RuleMatcher
 from qt_css_engine.qt_compat import qt_delete
@@ -377,7 +380,7 @@ def test_deactivate_clicked_runtimeerror_swallowed(_app: QApplication, monkeypat
         raise RuntimeError("deleted")
 
     monkeypatch.setattr(engine, "evaluate_widget_state", _boom)
-    engine.deactivate_clicked(widget, id(widget), ctx.clicked_anim_gen)
+    deactivate_clicked(engine, widget, id(widget), ctx.clicked_anim_gen)
     assert ":clicked" not in ctx.active_pseudos
     destroy(widget)
 
@@ -423,7 +426,7 @@ def test_parent_change_tolerates_deleted_child(_app: QApplication, qtbot: QtBot)
     wid = id(child)
     destroy(child)
     del child
-    engine.on_parent_change(parent)  # subtree contains dead ref → must not raise
+    handle_parent_change(engine, parent)  # subtree contains dead ref → must not raise
     qtbot.wait(20)
     assert wid not in engine.matcher.widget_cache.rules
     destroy(other)
@@ -523,7 +526,7 @@ def test_window_deactivate_clears_only_descendants_with_stuck(_app: QApplication
     try:
         hover_widget(engine, child)
         hover_widget(engine, orphan)
-        engine.on_window_deactivate(window)
+        handle_window_deactivate(engine, window)
         assert ":hover" not in engine.get_context(child).active_pseudos
         assert ":hover" in engine.get_context(orphan).active_pseudos
     finally:
@@ -544,7 +547,7 @@ def test_window_deactivate_tolerates_dead_child(_app: QApplication) -> None:
     wid = id(child)
     destroy(child)
     del child
-    engine.on_window_deactivate(window)  # stale context → parent() raises → skipped
+    handle_window_deactivate(engine, window)  # stale context → parent() raises → skipped
     assert wid in engine.store.contexts or wid not in engine.store.contexts
     destroy(window)
 
@@ -673,10 +676,7 @@ def test_pseudo_hover_leave_via_event_filter(_app: QApplication) -> None:
         destroy(widget)
 
 
-def test_writer_bind_and_deleted_flush(_app: QApplication, qtbot: QtBot) -> None:
-    writer = StyleWriter()
-    writer.bind(lambda _wid: None)
-    assert writer._get_ctx is not None
+def test_writer_deleted_flush(_app: QApplication, qtbot: QtBot) -> None:
     widget = QWidget()
     ctx = WidgetState()
     ctx.css_anim_props["color"] = "red"

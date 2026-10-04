@@ -32,6 +32,10 @@ from qt_css_engine.css.gradients import (
 from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedRuleState
 from qt_css_engine.engine.evaluator import Evaluation
+from qt_css_engine.engine.handlers.clicked import deactivate_clicked
+from qt_css_engine.engine.handlers.lifecycle import on_widget_destroyed
+from qt_css_engine.engine.handlers.parent_change import handle_parent_change
+from qt_css_engine.engine.handlers.window import handle_window_activate, handle_window_deactivate
 from qt_css_engine.geometry.box_model import (
     content_box_px,
     margin_side_px,
@@ -721,16 +725,16 @@ def test_deactivate_clicked_guards(_app: QApplication) -> None:
     widget.setProperty("class", "btn")
     try:
         # Unknown wid → no-op
-        engine.deactivate_clicked(widget, 123456789, 0)
+        deactivate_clicked(engine, widget, 123456789, 0)
         # Gen mismatch → no-op
         ctx = engine.get_context(widget)
         ctx.active_pseudos.add(":clicked")
         ctx.clicked_anim_gen = 5
-        engine.deactivate_clicked(widget, id(widget), 999)
+        deactivate_clicked(engine, widget, id(widget), 999)
         assert ":clicked" in ctx.active_pseudos
         # No :clicked pseudo → no-op
         ctx.active_pseudos.discard(":clicked")
-        engine.deactivate_clicked(widget, id(widget), 5)
+        deactivate_clicked(engine, widget, id(widget), 5)
     finally:
         destroy(widget)
 
@@ -746,7 +750,7 @@ def test_deactivate_clicked_deleted_widget_no_crash(_app: QApplication) -> None:
     ctx.active_pseudos.add(":clicked")
     wid, gen = id(widget), ctx.clicked_anim_gen
     destroy(widget)
-    engine.deactivate_clicked(widget, wid, gen)  # ctx gone → early return, no crash
+    deactivate_clicked(engine, widget, wid, gen)  # ctx gone → early return, no crash
 
 
 # ---------------------------------------------------------------------------
@@ -760,7 +764,7 @@ def test_destroy_untracked_widget_no_crash(_app: QApplication) -> None:
     try:
         # Never touched engine → no context
         assert id(widget) not in engine.store.contexts
-        engine._on_widget_destroyed(widget)
+        on_widget_destroyed(engine, id(widget))
     finally:
         destroy(widget)
 
@@ -798,11 +802,11 @@ def test_parent_change_no_descendant_queues_only_matching(_app: QApplication) ->
         assert engine.matcher.index.flags.has_descendant is False
         engine.polish.queue.clear()
         engine.polish.pending = False
-        engine.on_parent_change(widget)
+        handle_parent_change(engine, widget)
         assert id(widget) in engine.polish.queue
         engine.polish.queue.clear()
         engine.polish.pending = False
-        engine.on_parent_change(other)
+        handle_parent_change(engine, other)
         assert id(other) not in engine.polish.queue
     finally:
         destroy(widget)
@@ -821,7 +825,7 @@ def test_parent_change_with_descendant_invalidates_subtree(_app: QApplication, q
         assert engine.matcher.index.flags.has_descendant is True
         engine.matcher.matching_rules(child)
         assert id(child) in engine.matcher.widget_cache.rules
-        engine.on_parent_change(parent)
+        handle_parent_change(engine, parent)
         qtbot.wait(20)
         # Matched after re-queue without crash
         assert engine.matcher.matching_rules(child)
@@ -896,7 +900,7 @@ def test_window_activate_ignores_deleted_child(_app: QApplication) -> None:
     assert wid in engine.active_rule_widgets
     destroy(child)
     # Stale entry points at deleted C++ object → must be skipped, not crash
-    engine.on_window_activate(parent)
+    handle_window_activate(engine, parent)
     destroy(parent)
 
 
@@ -907,7 +911,7 @@ def test_window_deactivate_no_stuck_noop(_app: QApplication) -> None:
     child.setProperty("class", "box")
     engine.get_context(child)  # create empty context, no pseudos
     try:
-        engine.on_window_deactivate(parent)  # no stuck pseudos → no-op
+        handle_window_deactivate(engine, parent)  # no stuck pseudos → no-op
     finally:
         destroy(child)
         destroy(parent)
@@ -925,7 +929,7 @@ def test_window_deactivate_ignores_non_descendant(_app: QApplication) -> None:
     try:
         hover_widget(engine, child_b)
         assert ":hover" in engine.get_context(child_b).active_pseudos
-        engine.on_window_deactivate(window_a)  # different window → must not clear
+        handle_window_deactivate(engine, window_a)  # different window → must not clear
         assert ":hover" in engine.get_context(child_b).active_pseudos
     finally:
         destroy(child_b)

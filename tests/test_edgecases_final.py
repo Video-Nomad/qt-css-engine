@@ -12,6 +12,8 @@ from qt_css_engine.css.model import StyleRule
 from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedProperty, ResolvedRuleState
 from qt_css_engine.engine.evaluator import Evaluation
+from qt_css_engine.engine.handlers.parent_change import handle_parent_change
+from qt_css_engine.engine.handlers.window import handle_window_activate, handle_window_deactivate
 from qt_css_engine.matching.matcher import RuleMatcher
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QEasingCurve
@@ -213,7 +215,7 @@ def test_parent_change_should_evaluate_raises_swallowed(
             raise RuntimeError("gone")
 
         monkeypatch.setattr(engine, "should_evaluate", _boom)
-        engine.on_parent_change(parent)  # must swallow per-widget RuntimeError
+        handle_parent_change(engine, parent)  # must swallow per-widget RuntimeError
         qtbot.wait(10)
         monkeypatch.setattr(engine, "should_evaluate", orig)
     finally:
@@ -357,7 +359,7 @@ def test_window_activate_skips_dead_child_handcrafted(_app: QApplication) -> Non
     destroy(child)
     # Re-insert a dead wrapper to simulate a stale entry that destroy didn't clean
     engine.active_rule_widgets[wid] = child
-    engine.on_window_activate(window)
+    handle_window_activate(engine, window)
     destroy(window)
 
 
@@ -373,7 +375,7 @@ def test_window_deactivate_skips_missing_mirror(_app: QApplication) -> None:
     wid = id(widget)
     # Drop the widget mirror but keep the context → child None branch
     engine.store.widgets.pop(wid, None)
-    engine.on_window_deactivate(window)
+    handle_window_deactivate(engine, window)
     assert ":hover" in engine.store.contexts[wid].active_pseudos
     destroy(widget)
     destroy(window)
@@ -390,7 +392,7 @@ def test_window_deactivate_parent_raises_swallowed(_app: QApplication, monkeypat
     try:
         hover_widget(engine, child)
         monkeypatch.setattr(child, "parent", lambda: (_ for _ in ()).throw(RuntimeError("gone")))
-        engine.on_window_deactivate(window)  # must swallow, hover stays
+        handle_window_deactivate(engine, window)  # must swallow, hover stays
         assert ":hover" in engine.get_context(child).active_pseudos
     finally:
         destroy(child)

@@ -7,6 +7,7 @@ from qt_css_engine.animation.color import ColorAnimation
 from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.engine.evaluation import EvaluationCause
+from qt_css_engine.engine.handlers.clicked import finish_clicked_activation, prepare_clicked
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QCoreApplication, QEasingCurve
 from qt_css_engine.qt_compat.QtGui import QColor
@@ -170,10 +171,10 @@ def test_runtime_opt_out_releases_clicked_shadow(
     engine.evaluate_widget_state(widget, cause=EvaluationCause.POLISH)
     ctx = engine.get_context(widget)
     updated = set(ctx.active_pseudos)
-    cause = engine.prepare_clicked(widget, ctx, updated)
+    cause = prepare_clicked(engine, widget, ctx, updated)
     ctx.active_pseudos = updated
     engine.evaluate_widget_state(widget, cause=cause)
-    engine.finish_clicked_activation(widget, ctx)
+    finish_clicked_activation(engine, widget, ctx)
     assert "box-shadow" in ctx.clicked_anim_props
     assert "box-shadow" in ctx.clicked_anim_callbacks
 

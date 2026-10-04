@@ -5,17 +5,13 @@ from typing import TYPE_CHECKING
 
 from qt_css_engine.animation.delay import DelayScheduler
 from qt_css_engine.animation.numeric import GenericPropertyAnimation
-from qt_css_engine.constants import BORDER_RADIUS_PROPS
+from qt_css_engine.constants import BORDER_RADIUS_PROPS, ENGINE_EVENT_TYPES
 from qt_css_engine.engine.cascade import CascadeEvaluator
 from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.engine.evaluator import WidgetEvaluator
 from qt_css_engine.engine.event_router import EventRouter
-from qt_css_engine.engine.handlers import class_change as class_change_handler
-from qt_css_engine.engine.handlers import clicked as clicked_handler
 from qt_css_engine.engine.handlers import lifecycle as lifecycle_handler
-from qt_css_engine.engine.handlers import parent_change as parent_change_handler
 from qt_css_engine.engine.handlers import reload as reload_handler
-from qt_css_engine.engine.handlers import window as window_handler
 from qt_css_engine.engine.handlers.polish import PolishQueue
 from qt_css_engine.matching.matcher import RuleMatcher
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEvent, QObject, Qt, QTimer
@@ -38,7 +34,7 @@ class TransitionEngine(QObject):
     """
     Core CSS transition engine for PyQt6/PySide6.
 
-    Installed as a global event filter on QApplication. Intercepts hover, mouse,
+    Installed as a global event filter on QApplication or individual QWidget. Intercepts hover, mouse,
     and focus events to track widget pseudo-states, evaluates the CSS cascade,
     and drives smooth property animations via Qt's animation framework.
 
@@ -168,7 +164,7 @@ class TransitionEngine(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # type: ignore[override]
         """Intercept widget events to track pseudo-states and trigger CSS transitions."""
         event_type = event.type()
-        if not EventRouter.is_relevant(event_type, watched) or not isinstance(watched, QWidget):
+        if event_type not in ENGINE_EVENT_TYPES or not isinstance(watched, QWidget):
             return False
         EventRouter.dispatch(self, watched, event, event_type)
         return False
@@ -228,45 +224,6 @@ class TransitionEngine(QObject):
         """Drain the deferred Polish evaluation queue after a burst completes."""
         self.polish.flush(self)
 
-    def on_class_change(self, widget: QWidget) -> None:
-        """Handle class property change — snapshot size, unpolish/polish, and kick off animations."""
-        class_change_handler.handle_class_change(self, widget)
-
-    def on_attr_change(self, widget: QWidget) -> None:
-        """Handle tracked `[attr=value]` dynamic-property change.
-
-        Same path as a class change: the structural match is unchanged, but the
-        cascade target (and Qt's native non-animated props) must be re-resolved.
-        Descendant caches are invalidated too, so ancestor-attr selectors refresh
-        on their next evaluation.
-        """
-        class_change_handler.handle_class_change(self, widget)
-
-    def on_shadow_policy_change(self, widget: QWidget) -> None:
-        """Refresh the widget's shadow when cssEngineDisableShadow changes."""
-        self.evaluator.refresh_shadow_policy(widget)
-
-    def on_parent_change(self, widget: QWidget) -> None:
-        """Handle reparenting; ancestor-dependent selectors may now match differently."""
-        parent_change_handler.handle_parent_change(self, widget)
-
-    def on_window_activate(self, widget: QWidget) -> None:
-        """Set :active on children that have :active rules when the window gains focus."""
-        window_handler.handle_window_activate(self, widget)
-
-    def on_window_deactivate(self, widget: QWidget, *, clear_active: bool = True) -> None:
-        """Clear stuck :hover/:pressed/:active states when the window loses focus."""
-        window_handler.handle_window_deactivate(self, widget, clear_active=clear_active)
-
-    def prepare_clicked(self, widget: QWidget, ctx: WidgetState, updated: set[str]) -> EvaluationCause:
-        return clicked_handler.prepare_clicked(self, widget, ctx, updated)
-
-    def finish_clicked_activation(self, widget: QWidget, ctx: WidgetState) -> None:
-        clicked_handler.finish_clicked_activation(self, widget, ctx)
-
-    def deactivate_clicked(self, widget: QWidget, wid: int, gen: int) -> None:
-        clicked_handler.deactivate_clicked(self, widget, wid, gen)
-
     def ensure_wa_hover(self, widget: QWidget, *, rules: list[StyleRule] | None = None) -> None:
         """Set WA_Hover on widget if it matches any rule with a :hover pseudo-class.
 
@@ -322,13 +279,6 @@ class TransitionEngine(QObject):
         else:
             ctx.active_pseudos.discard(":checked")
         self.evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
-
-    # -------------------------------------------------------------------------
-    # Widget lifecycle tracking
-    # -------------------------------------------------------------------------
-
-    def _on_widget_destroyed(self, widget: QWidget) -> None:
-        lifecycle_handler.on_widget_destroyed(self, id(widget))
 
     # -------------------------------------------------------------------------
     # State evaluation — delegates to WidgetEvaluator (explicit pipeline object)

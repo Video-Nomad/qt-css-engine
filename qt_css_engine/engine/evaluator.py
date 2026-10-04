@@ -23,6 +23,7 @@ from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.constants import BORDER_RADIUS_PROPS, EFFECT_PROPS, SIZE_PROPS
 from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedProperty, ResolvedRuleState
+from qt_css_engine.engine.handlers.clicked import deactivate_clicked, finish_clicked_activation
 from qt_css_engine.geometry.box_model import content_box_px
 from qt_css_engine.geometry.clamp import clamp_border_radius, target_border_radius_box_size
 from qt_css_engine.geometry.natural_size import get_natural_size, get_preferred_size_fallback
@@ -136,7 +137,7 @@ class WidgetEvaluator:
             if isinstance(opacity, OpacityAnimation):
                 opacity.refresh_effect()
             if ":clicked" in ctx.active_pseudos:
-                self._engine.finish_clicked_activation(widget, ctx)
+                finish_clicked_activation(self._engine, widget, ctx)
             return
         if not self._engine.should_evaluate(widget):
             return
@@ -163,7 +164,7 @@ class WidgetEvaluator:
         if ev.state.transitions_reset and ev.ctx.clicked_anim_props - ev.state.transitions.keys():
             # Stopping an animation does not emit finished; release a clicked
             # cycle whose remaining properties were snapped by the reset.
-            self._engine.finish_clicked_activation(ev.widget, ev.ctx)
+            finish_clicked_activation(self._engine, ev.widget, ev.ctx)
         return needs_style_update
 
     # ------------------------------------------------------------------
@@ -436,7 +437,7 @@ class WidgetEvaluator:
             if c and gen == c.clicked_anim_gen and prop in c.clicked_anim_props:
                 c.clicked_anim_props.discard(prop)
                 if not c.clicked_anim_props:
-                    self._engine.deactivate_clicked(target, wid, gen)
+                    deactivate_clicked(self._engine, target, wid, gen)
 
         self._replace_finished_callback(
             anim_obj, prop, ctx.clicked_anim_callbacks, weak_widget_callback(widget, _on_done)
@@ -673,7 +674,7 @@ class WidgetEvaluator:
             curve,
             ctx=ctx,
             box_props=box_props,
-            style_flush_callback=lambda w, c: self._engine.writer.schedule(w, c),
+            style_flush_callback=self._engine.writer.schedule,
             effect_priority=self._engine.effect_priority,
             parent=self._engine,
         )

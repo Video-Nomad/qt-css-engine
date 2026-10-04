@@ -1,10 +1,14 @@
-"""Event router — dispatch Qt events to handler methods."""
+"""Event router — dispatch Qt events to their handlers."""
 
 from typing import TYPE_CHECKING
 
-from qt_css_engine.constants import DISABLE_BOX_SHADOW_PROPERTY, ENGINE_EVENT_TYPES, PSEUDO_EVENTS
+from qt_css_engine.constants import DISABLE_BOX_SHADOW_PROPERTY, PSEUDO_EVENTS
 from qt_css_engine.engine.evaluation import EvaluationCause
-from qt_css_engine.qt_compat.QtCore import QEvent, QObject, Qt
+from qt_css_engine.engine.handlers.class_change import handle_class_change
+from qt_css_engine.engine.handlers.clicked import finish_clicked_activation, prepare_clicked
+from qt_css_engine.engine.handlers.parent_change import handle_parent_change
+from qt_css_engine.engine.handlers.window import handle_window_activate, handle_window_deactivate
+from qt_css_engine.qt_compat.QtCore import QEvent, Qt
 from qt_css_engine.qt_compat.QtGui import QMouseEvent
 from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.state.pseudo import PseudoMachine
@@ -15,20 +19,6 @@ if TYPE_CHECKING:
 
 class EventRouter:
     """Stateless helper for TransitionEngine.eventFilter routing."""
-
-    @staticmethod
-    def is_relevant(event_type: QEvent.Type, watched: QObject) -> bool:
-        return event_type in ENGINE_EVENT_TYPES and isinstance(watched, QWidget)
-
-    @staticmethod
-    def is_pseudo(event_type: QEvent.Type) -> bool:
-        return event_type in PSEUDO_EVENTS
-
-    @staticmethod
-    def is_class_property_change(event: QEvent) -> bool:
-        """Return whether a DynamicPropertyChange event targets the CSS class property."""
-        property_name = getattr(event, "propertyName", lambda: None)()
-        return property_name is not None and getattr(property_name, "data", lambda: b"")() == b"class"
 
     @staticmethod
     def changed_property_name(event: QEvent) -> str | None:
@@ -47,7 +37,7 @@ class EventRouter:
     @staticmethod
     def dispatch(engine: TransitionEngine, widget: QWidget, event: QEvent, event_type: QEvent.Type) -> None:
         """Route a relevant Qt event to the focused handler for that event."""
-        if EventRouter.is_pseudo(event_type):
+        if event_type in PSEUDO_EVENTS:
             EventRouter.handle_pseudo(engine, widget, event, event_type)
             return
         match event_type:
@@ -56,21 +46,22 @@ class EventRouter:
             case QEvent.Type.Resize:
                 engine.on_resize(widget)
             case QEvent.Type.DynamicPropertyChange:
-                if EventRouter.is_class_property_change(event):
-                    engine.on_class_change(widget)
-                elif (attr_name := EventRouter.changed_property_name(event)) is not None:
+                attr_name = EventRouter.changed_property_name(event)
+                if attr_name == "class":
+                    handle_class_change(engine, widget)
+                elif attr_name is not None:
                     if attr_name == DISABLE_BOX_SHADOW_PROPERTY:
-                        engine.on_shadow_policy_change(widget)
+                        engine.evaluator.refresh_shadow_policy(widget)
                     if attr_name in engine.matcher.tracked_attrs:
-                        engine.on_attr_change(widget)
+                        handle_class_change(engine, widget)
             case QEvent.Type.ParentChange:
-                engine.on_parent_change(widget)
+                handle_parent_change(engine, widget)
             case QEvent.Type.WindowActivate:
-                engine.on_window_activate(widget)
+                handle_window_activate(engine, widget)
             case QEvent.Type.WindowDeactivate:
-                engine.on_window_deactivate(widget)
+                handle_window_deactivate(engine, widget)
             case QEvent.Type.Leave if widget.isWindow():
-                engine.on_window_deactivate(widget, clear_active=False)
+                handle_window_deactivate(engine, widget, clear_active=False)
             case _:
                 pass
 
@@ -87,10 +78,10 @@ class EventRouter:
             engine.claimed_mouse_event_ts = timestamp
         ctx = engine.get_context(widget)
         updated = PseudoMachine.update(ctx.active_pseudos, event_type)
-        cause = engine.prepare_clicked(widget, ctx, updated) if is_mouse_press else EvaluationCause.PSEUDO_STATE
+        cause = prepare_clicked(engine, widget, ctx, updated) if is_mouse_press else EvaluationCause.PSEUDO_STATE
         if updated == ctx.active_pseudos:
             return
         ctx.active_pseudos = updated
         engine.evaluate_widget_state(widget, cause=cause)
         if cause is EvaluationCause.CLICKED_ACTIVATION:
-            engine.finish_clicked_activation(widget, ctx)
+            finish_clicked_activation(engine, widget, ctx)

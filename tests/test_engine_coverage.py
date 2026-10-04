@@ -33,6 +33,7 @@ from qt_css_engine.animation.factory import Animation
 from qt_css_engine.animation.numeric import GenericPropertyAnimation
 from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedRuleState
+from qt_css_engine.engine.handlers.class_change import handle_class_change
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QSize, Qt, QTimer
 from qt_css_engine.qt_compat.QtGui import QColor
@@ -460,7 +461,7 @@ def test_class_change_numeric_initial_tick_flushes_start_size_immediately(_app: 
 
     widget.setProperty("class", "box focused")
     count_before = widget.setStyleSheet_count
-    engine.on_class_change(widget)
+    handle_class_change(engine, widget)
 
     assert widget.setStyleSheet_count > count_before
     assert not ctx.style_flush_pending
@@ -557,7 +558,7 @@ def test_class_change_ticks_after_the_first_frame_are_batched(_app: QApplication
     ctx.css_anim_props["color"] = "white"
 
     widget.setProperty("class", "box on")
-    engine.on_class_change(widget)
+    handle_class_change(engine, widget)
     assert len(ctx.class_anim_props) == 2, "both properties should animate from the class change"
 
     # Drive one frame of every running animation and count the resulting writes.
@@ -883,7 +884,7 @@ def test_class_change_noop_radius_rewrites_stale_larger_clamp(_app: QApplication
         ctx.css_anim_props[corner] = "22.000px"
 
     widget.setProperty("class", "ws-btn active_populated")
-    engine.on_class_change(widget)
+    handle_class_change(engine, widget)
 
     for corner in (
         "border-top-left-radius",

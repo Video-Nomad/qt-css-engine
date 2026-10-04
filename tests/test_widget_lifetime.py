@@ -11,6 +11,7 @@ from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.engine.handlers import polish as polish_handler
 from qt_css_engine.engine.handlers import reload as reload_handler
+from qt_css_engine.engine.handlers.clicked import finish_clicked_activation, prepare_clicked
 from qt_css_engine.qt_compat import is_qobject_alive, qt_delete
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QCoreApplication, QEasingCurve, QEvent
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QCheckBox, QWidget
@@ -148,7 +149,7 @@ def test_animation_finished_callbacks_do_not_retain_widget(_app: QApplication, c
     widget.setProperty("class", "box")
     ctx = engine.get_context(widget)
     updated = {":clicked"}
-    engine.prepare_clicked(widget, ctx, updated)
+    prepare_clicked(engine, widget, ctx, updated)
     ctx.active_pseudos = updated
     engine.evaluate_widget_state(widget, cause=cause)
     assert ctx.class_anim_callbacks if cause == EvaluationCause.CLASS_CHANGE else ctx.clicked_anim_callbacks
@@ -307,7 +308,7 @@ def test_pending_clicked_deactivation_does_not_retain_widget(_app: QApplication)
     widget.setProperty("class", "box")
     ctx = engine.get_context(widget)
     ctx.active_pseudos.add(":clicked")
-    engine.finish_clicked_activation(widget, ctx)
+    finish_clicked_activation(engine, widget, ctx)
     wid = id(widget)
     widget_ref = weakref.ref(widget)
 

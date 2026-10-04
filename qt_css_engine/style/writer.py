@@ -39,10 +39,6 @@ class StyleWriter:
     def __init__(self, get_ctx: Callable[[int], WidgetState | None] | None = None) -> None:
         self._get_ctx = get_ctx
 
-    def bind(self, get_ctx: Callable[[int], WidgetState | None]) -> None:
-        """Bind the widget-id -> context lookup used by deferred flushes."""
-        self._get_ctx = get_ctx
-
     def schedule(self, widget: QWidget, ctx: WidgetState) -> None:
         """Queue one stylesheet write after the current burst of animation ticks."""
         # The evaluator commits the complete first frame synchronously. Writing here would

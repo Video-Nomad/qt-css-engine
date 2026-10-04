@@ -7,6 +7,8 @@ from qt_css_engine import TransitionEngine
 from qt_css_engine.animation.color import ColorAnimation
 from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.engine.evaluation import EvaluationCause
+from qt_css_engine.engine.handlers.class_change import handle_class_change
+from qt_css_engine.engine.handlers.clicked import finish_clicked_activation, prepare_clicked
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation
 from qt_css_engine.qt_compat.QtGui import QColor
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QGraphicsOpacityEffect, QWidget
@@ -177,7 +179,7 @@ def test_none_after_class_removal_settles_managed_value(_app: QApplication, qtbo
     engine.evaluate_widget_state(widget)
     assert ctx.pending_delays
     widget.setProperty("class", "quiet")
-    engine.on_class_change(widget)
+    handle_class_change(engine, widget)
     assert not ctx.pending_delays
     assert QColor(ctx.css_anim_props["color"]) == QColor("green")
 
@@ -194,10 +196,10 @@ def test_none_releases_running_clicked_cycle(_app: QApplication, qtbot: QtBot) -
     widget.setProperty("class", "box")
     ctx = engine.get_context(widget)
     updated: set[str] = set()
-    cause = engine.prepare_clicked(widget, ctx, updated)
+    cause = prepare_clicked(engine, widget, ctx, updated)
     ctx.active_pseudos.update(updated)
     engine.evaluate_widget_state(widget, cause=cause)
-    engine.finish_clicked_activation(widget, ctx)
+    finish_clicked_activation(engine, widget, ctx)
     assert ctx.clicked_anim_props == {"color"}
     assert ctx.active_animations["color"].anim.state() == QAbstractAnimation.State.Running
     widget.setProperty("quiet", True)
@@ -231,6 +233,6 @@ def test_none_snaps_effect_and_cleans_effect_when_rule_disappears(_app: QApplica
     assert isinstance(effect, QGraphicsOpacityEffect)
     assert effect.opacity() == pytest.approx(0.25)
     widget.setProperty("class", "quiet")
-    engine.on_class_change(widget)
+    handle_class_change(engine, widget)
     assert "opacity" not in ctx.active_animations
     assert widget.graphicsEffect() is None
