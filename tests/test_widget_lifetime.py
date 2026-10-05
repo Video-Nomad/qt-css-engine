@@ -9,12 +9,13 @@ from qt_css_engine import TransitionEngine
 from qt_css_engine.animation.factory import Animation, create_animator
 from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.engine.evaluation import EvaluationCause
+from qt_css_engine.engine.handlers import lifecycle as lifecycle_handler
 from qt_css_engine.engine.handlers import polish as polish_handler
 from qt_css_engine.engine.handlers import reload as reload_handler
 from qt_css_engine.engine.handlers.clicked import finish_clicked_activation, prepare_clicked
 from qt_css_engine.qt_compat import is_qobject_alive, qt_delete
-from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QCoreApplication, QEasingCurve, QEvent
-from qt_css_engine.qt_compat.QtWidgets import QApplication, QCheckBox, QWidget
+from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QCoreApplication, QEasingCurve, QEvent, Signal
+from qt_css_engine.qt_compat.QtWidgets import QApplication, QCheckBox, QVBoxLayout, QWidget
 from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.writer import StyleWriter
 
@@ -41,6 +42,65 @@ def assert_collected[W: QWidget](engine: TransitionEngine, wid: int, widget_ref:
     assert wid not in engine.widget_finalizers
     assert wid not in engine.matcher.widget_cache.rules
     drain_events()
+
+
+class CyclicWidget(QWidget):
+    triggered = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.main_layout = QVBoxLayout(self)
+        self.child = QWidget(self)
+        self.main_layout.addWidget(self.child)
+
+
+def test_cyclic_parent_deferred_delete_cleans_up_child(_app: QApplication) -> None:
+    """Guard against the PyQt6 crash triggered by cyclic parent collection before
+    deferred child destruction when the lifetime finalizer was wrapped in a lambda.
+    """
+    engine = make_engine()
+
+    def queue_widget() -> tuple[int, weakref.ref[QWidget]]:
+        widget = CyclicWidget()
+        widget.triggered.connect(lambda: widget.update())
+        engine.get_context(widget.child)
+        wid, widget_ref = id(widget.child), weakref.ref(widget.child)
+        widget.deleteLater()
+        return wid, widget_ref
+
+    wid, widget_ref = queue_widget()
+    # Collect the signal cycle before Qt destroys the tracked child.
+    gc.collect()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert_collected(engine, wid, widget_ref)
+
+
+def test_destroyed_signal_then_collection_cleans_up_once(_app: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine()
+    parent = QWidget()
+    widget = QWidget(parent)
+    wid = id(widget)
+    calls: list[int] = []
+    original = lifecycle_handler.on_widget_destroyed
+
+    def record_cleanup(owner: TransitionEngine, destroyed_id: int) -> None:
+        calls.append(destroyed_id)
+        original(owner, destroyed_id)
+
+    monkeypatch.setattr(lifecycle_handler, "on_widget_destroyed", record_cleanup)
+    engine.get_context(widget)
+    finalizer = engine.widget_finalizers[wid]
+    parent.deleteLater()
+    drain_events()
+
+    assert not is_qobject_alive(widget)
+    assert calls == [wid]
+    assert not finalizer.alive
+    widget_ref = weakref.ref(widget)
+    del widget
+    assert_collected(engine, wid, widget_ref)
+    assert calls == [wid]
 
 
 def test_detached_polished_widget_is_collected(_app: QApplication) -> None:

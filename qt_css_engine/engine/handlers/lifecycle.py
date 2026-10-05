@@ -33,7 +33,10 @@ def track_widget_lifetime(engine: TransitionEngine, widget: QWidget) -> None:
     finalizer = weakref.finalize(widget, cleanup)
     finalizer.atexit = False
     engine.widget_finalizers[wid] = finalizer
-    widget.destroyed.connect(lambda: finalizer())
+    # A closure around the finalizer can crash PyQt6 when cyclic parent wrappers
+    # are collected before deferred child destruction. finalize is itself a
+    # callable that accepts and ignores destroyed's QObject argument.
+    widget.destroyed.connect(finalizer)
 
 
 def on_widget_destroyed(engine: TransitionEngine, wid: int) -> None:
