@@ -1,4 +1,6 @@
 # pyright: reportPrivateUsage=false
+import math
+
 from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
@@ -325,8 +327,11 @@ def test_hidden_child_show_reclamps_parent_radius_with_effect_handles(qtbot: QtB
         qtbot.wait(20)
 
         assert frame.width() > 0
-        assert frame_ctx.css_anim_props.get("border-top-left-radius") == "2.000px"
-        assert frame_ctx.css_anim_props.get("border-bottom-left-radius") == "2.000px"
+        assert frame.height() > 0
+        # Frame geometry depends on font metrics (OS scaling) so it's better to use derived, instead of hardcoded.
+        expected_radius = f"{float(math.floor(min(frame.width(), frame.height()) / 2.0)):.3f}px"
+        assert frame_ctx.css_anim_props.get("border-top-left-radius") == expected_radius
+        assert frame_ctx.css_anim_props.get("border-bottom-left-radius") == expected_radius
         assert "border-top-right-radius" not in frame_ctx.css_anim_props
         assert "border-bottom-right-radius" not in frame_ctx.css_anim_props
     finally:
