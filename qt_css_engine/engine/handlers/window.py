@@ -14,7 +14,10 @@ event_logger = logging.getLogger("qt_css_engine.event")
 
 
 def handle_window_activate(engine: TransitionEngine, widget: QWidget) -> None:
-    for child in engine.active_rule_widgets.values():
+    for wid in list(engine.active_rule_widgets):
+        child = engine.active_rule_widgets.get(wid)
+        if child is None:
+            continue
         try:
             if child.window() is not widget:
                 continue

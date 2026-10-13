@@ -1,20 +1,17 @@
 import logging
 import os
+import weakref
 from typing import TYPE_CHECKING
 
 from qt_css_engine.animation.delay import DelayScheduler
 from qt_css_engine.animation.numeric import GenericPropertyAnimation
-from qt_css_engine.constants import BORDER_RADIUS_PROPS
+from qt_css_engine.constants import BORDER_RADIUS_PROPS, ENGINE_EVENT_TYPES
 from qt_css_engine.engine.cascade import CascadeEvaluator
 from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.engine.evaluator import WidgetEvaluator
 from qt_css_engine.engine.event_router import EventRouter
-from qt_css_engine.engine.handlers import class_change as class_change_handler
-from qt_css_engine.engine.handlers import clicked as clicked_handler
 from qt_css_engine.engine.handlers import lifecycle as lifecycle_handler
-from qt_css_engine.engine.handlers import parent_change as parent_change_handler
 from qt_css_engine.engine.handlers import reload as reload_handler
-from qt_css_engine.engine.handlers import window as window_handler
 from qt_css_engine.engine.handlers.polish import PolishQueue
 from qt_css_engine.matching.matcher import RuleMatcher
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEvent, QObject, Qt, QTimer
@@ -24,7 +21,7 @@ from qt_css_engine.state.store import WidgetStore
 from qt_css_engine.state.suppress import is_suppressed
 from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.writer import StyleWriter
-from qt_css_engine.utils.qt_helpers import safe_disconnect
+from qt_css_engine.utils.qt_helpers import safe_disconnect, weak_widget_callback
 
 if TYPE_CHECKING:
     from qt_css_engine.css.model import StyleRule
@@ -37,7 +34,7 @@ class TransitionEngine(QObject):
     """
     Core CSS transition engine for PyQt6/PySide6.
 
-    Installed as a global event filter on QApplication. Intercepts hover, mouse,
+    Installed as a global event filter on QApplication or individual QWidget. Intercepts hover, mouse,
     and focus events to track widget pseudo-states, evaluates the CSS cascade,
     and drives smooth property animations via Qt's animation framework.
 
@@ -90,7 +87,9 @@ class TransitionEngine(QObject):
         # Single source of truth for per-widget state.
         self.store = WidgetStore()
         # Widgets that have at least one :active rule — populated at Polish time for O(1) activate/deactivate.
-        self.active_rule_widgets: dict[int, QWidget] = {}
+        self.active_rule_widgets: weakref.WeakValueDictionary[int, QWidget] = weakref.WeakValueDictionary()
+        # One cleanup callback for both Qt destruction and Python wrapper collection.
+        self.widget_finalizers: dict[int, weakref.finalize[[], QWidget]] = {}
         # Checkable widget IDs already connected to toggled signal.
         self.connected_checkable_ids: set[int] = set()
 
@@ -104,7 +103,7 @@ class TransitionEngine(QObject):
         # Prevents :pressed from propagating to ancestor widgets on middle/right click.
         self.claimed_mouse_event_ts: int = -1
 
-        # Deferred Polish burst evaluation. PolishQueue owns pending/queue/force_ids.
+        # Deferred Polish burst evaluation. PolishQueue owns pending/queue/forced_widgets.
         self.polish = PolishQueue()
         self.delays = DelayScheduler(self)
         # Scoped inline-style flush coalescing + dedup. Bound to the store lookup so
@@ -152,10 +151,9 @@ class TransitionEngine(QObject):
         """Get or create the context for a widget via the store."""
         ctx = self.store.get(widget)
         if ctx is None:
-            # Engine wires its own comprehensive _on_widget_destroyed (stops
-            # animations); the store stays pure storage with no signal wiring.
+            # Register cleanup for destruction and collection; the store stays pure storage.
             ctx = self.store.get_or_create(widget)
-            widget.destroyed.connect(lambda: self._on_widget_destroyed(widget))
+            lifecycle_handler.track_widget_lifetime(self, widget)
         return ctx
 
     # -------------------------------------------------------------------------
@@ -166,7 +164,7 @@ class TransitionEngine(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # type: ignore[override]
         """Intercept widget events to track pseudo-states and trigger CSS transitions."""
         event_type = event.type()
-        if not EventRouter.is_relevant(event_type, watched) or not isinstance(watched, QWidget):
+        if event_type not in ENGINE_EVENT_TYPES or not isinstance(watched, QWidget):
             return False
         EventRouter.dispatch(self, watched, event, event_type)
         return False
@@ -226,41 +224,6 @@ class TransitionEngine(QObject):
         """Drain the deferred Polish evaluation queue after a burst completes."""
         self.polish.flush(self)
 
-    def on_class_change(self, widget: QWidget) -> None:
-        """Handle class property change — snapshot size, unpolish/polish, and kick off animations."""
-        class_change_handler.handle_class_change(self, widget)
-
-    def on_attr_change(self, widget: QWidget) -> None:
-        """Handle tracked `[attr=value]` dynamic-property change.
-
-        Same path as a class change: the structural match is unchanged, but the
-        cascade target (and Qt's native non-animated props) must be re-resolved.
-        Descendant caches are invalidated too, so ancestor-attr selectors refresh
-        on their next evaluation.
-        """
-        class_change_handler.handle_class_change(self, widget)
-
-    def on_parent_change(self, widget: QWidget) -> None:
-        """Handle reparenting; ancestor-dependent selectors may now match differently."""
-        parent_change_handler.handle_parent_change(self, widget)
-
-    def on_window_activate(self, widget: QWidget) -> None:
-        """Set :active on children that have :active rules when the window gains focus."""
-        window_handler.handle_window_activate(self, widget)
-
-    def on_window_deactivate(self, widget: QWidget, *, clear_active: bool = True) -> None:
-        """Clear stuck :hover/:pressed/:active states when the window loses focus."""
-        window_handler.handle_window_deactivate(self, widget, clear_active=clear_active)
-
-    def prepare_clicked(self, widget: QWidget, ctx: WidgetState, updated: set[str]) -> EvaluationCause:
-        return clicked_handler.prepare_clicked(self, widget, ctx, updated)
-
-    def finish_clicked_activation(self, widget: QWidget, ctx: WidgetState) -> None:
-        clicked_handler.finish_clicked_activation(self, widget, ctx)
-
-    def deactivate_clicked(self, widget: QWidget, wid: int, gen: int) -> None:
-        clicked_handler.deactivate_clicked(self, widget, wid, gen)
-
     def ensure_wa_hover(self, widget: QWidget, *, rules: list[StyleRule] | None = None) -> None:
         """Set WA_Hover on widget if it matches any rule with a :hover pseudo-class.
 
@@ -301,14 +264,12 @@ class TransitionEngine(QObject):
         wid = id(widget)
         if wid in self.connected_checkable_ids:
             return
+        lifecycle_handler.track_widget_lifetime(self, widget)
         self.connected_checkable_ids.add(wid)
         if widget.isChecked():
             self.get_context(widget).active_pseudos.add(":checked")
 
-        def _on_toggle(checked: bool, w: QWidget = widget) -> None:
-            self.on_checked_changed(w, checked)
-
-        widget.toggled.connect(_on_toggle)
+        widget.toggled.connect(weak_widget_callback(widget, self.on_checked_changed))
 
     def on_checked_changed(self, widget: QWidget, checked: bool) -> None:
         """Sync :checked pseudo-state and re-evaluate transitions on button toggle."""
@@ -318,13 +279,6 @@ class TransitionEngine(QObject):
         else:
             ctx.active_pseudos.discard(":checked")
         self.evaluate_widget_state(widget, cause=EvaluationCause.PSEUDO_STATE)
-
-    # -------------------------------------------------------------------------
-    # Widget lifecycle tracking
-    # -------------------------------------------------------------------------
-
-    def _on_widget_destroyed(self, widget: QWidget) -> None:
-        lifecycle_handler.on_widget_destroyed(self, widget)
 
     # -------------------------------------------------------------------------
     # State evaluation — delegates to WidgetEvaluator (explicit pipeline object)

@@ -4,6 +4,7 @@ import math
 import re
 
 from qt_css_engine.constants import EASING_MAP
+from qt_css_engine.qt_compat._api import USE_PYSIDE6
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QPointF
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "resolve_easing_curve",
 ]
 
+# Reuse curves so repeated steps() configurations share a callback slot.
 _steps_curve_cache: dict[tuple[int, str], QEasingCurve] = {}
 
 CUBIC_BEZIER_RE = re.compile(
@@ -57,7 +59,12 @@ def make_steps_curve(n: int, position: str) -> QEasingCurve:
             return 1.0 if t >= 1.0 else math.floor(t * n) / n
 
     curve = QEasingCurve()
-    curve.setCustomType(fn)
+    try:
+        curve.setCustomType(fn)
+    except ValueError:
+        if USE_PYSIDE6:
+            raise
+        # Keep Linear when PyQt6's callback slots are full, matching PySide6.
     _steps_curve_cache[cache_key] = curve
     return curve
 

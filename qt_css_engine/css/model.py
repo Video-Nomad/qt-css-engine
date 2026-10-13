@@ -30,6 +30,8 @@ class StyleRule:
     # CSS2 a-b-c specificity (Qt docs follow CSS2) + source order for ties.
     specificity: tuple[int, int, int] = (0, 0, 0)
     order: int = 0
+    # The parser keeps only specs after the last explicit `none` in this block.
+    resets_transitions: bool = False
 
     has_effect_props: bool = field(init=False, default=False)
     has_cursor_prop: bool = field(init=False, default=False)

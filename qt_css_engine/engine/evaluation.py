@@ -51,6 +51,7 @@ class ResolvedRuleState:
     target_props: dict[str, str] = field(default_factory=dict)
     transitions: dict[str, TransitionSpec] = field(default_factory=dict)
     animated_props: set[str] = field(default_factory=set)
+    transitions_reset: bool = False
 
 
 @dataclass(frozen=True)

@@ -1,10 +1,13 @@
 # pyright: reportPrivateUsage=false
+import math
+
 from pytestqt.qtbot import QtBot
 
 from qt_css_engine import TransitionEngine
 from qt_css_engine.animation.numeric import GenericPropertyAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.css.parser import extract_rules
+from qt_css_engine.engine.handlers.class_change import handle_class_change
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, QEvent, QPointF, Qt
 from qt_css_engine.qt_compat.QtGui import QMouseEvent
 from qt_css_engine.qt_compat.QtWidgets import QWidget
@@ -246,7 +249,7 @@ def test_resize_event_does_not_snap_running_size_transition(qtbot: QtBot):
     engine.evaluate_widget_state(widget)
 
     widget.setProperty("class", "box wide")
-    engine.on_class_change(widget)
+    handle_class_change(engine, widget)
 
     ctx = engine.get_context(widget)
     anim = ctx.active_animations.get("width")
@@ -324,8 +327,11 @@ def test_hidden_child_show_reclamps_parent_radius_with_effect_handles(qtbot: QtB
         qtbot.wait(20)
 
         assert frame.width() > 0
-        assert frame_ctx.css_anim_props.get("border-top-left-radius") == "2.000px"
-        assert frame_ctx.css_anim_props.get("border-bottom-left-radius") == "2.000px"
+        assert frame.height() > 0
+        # Frame geometry depends on font metrics (OS scaling) so it's better to use derived, instead of hardcoded.
+        expected_radius = f"{float(math.floor(min(frame.width(), frame.height()) / 2.0)):.3f}px"
+        assert frame_ctx.css_anim_props.get("border-top-left-radius") == expected_radius
+        assert frame_ctx.css_anim_props.get("border-bottom-left-radius") == expected_radius
         assert "border-top-right-radius" not in frame_ctx.css_anim_props
         assert "border-bottom-right-radius" not in frame_ctx.css_anim_props
     finally:

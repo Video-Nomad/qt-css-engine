@@ -26,6 +26,7 @@ from qt_css_engine.animation.numeric import GenericPropertyAnimation
 from qt_css_engine.css.parser import extract_rules
 from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedRuleState
 from qt_css_engine.engine.evaluator import Evaluation
+from qt_css_engine.engine.handlers.class_change import handle_class_change
 from qt_css_engine.geometry.box_model import content_box_px
 from qt_css_engine.geometry.natural_size import get_preferred_size_fallback
 from qt_css_engine.qt_compat import qt_delete
@@ -714,7 +715,7 @@ def test_class_change_size_animation_uses_pre_polish_size_as_origin(_app: QAppli
     ctx.css_anim_props["width"] = "200.000px"
 
     btn.setProperty("class", "btn")
-    engine.on_class_change(btn)
+    handle_class_change(engine, btn)
 
     if "width" in ctx.active_animations:
         anim = ctx.active_animations["width"]
@@ -747,7 +748,7 @@ def test_class_change_to_natural_sets_clean_on_finish(_app: QApplication, qtbot:
     ctx = engine.get_context(btn)
     ctx.css_anim_props["width"] = "200.000px"
     btn.setProperty("class", "btn")
-    engine.on_class_change(btn)
+    handle_class_change(engine, btn)
 
     if "width" in ctx.active_animations:
         anim = ctx.active_animations["width"]
@@ -855,7 +856,7 @@ def test_class_change_clears_pre_polish_size_after_evaluation(_app: QApplication
     ctx = engine.get_context(widget)
 
     widget.setProperty("class", "x wide")
-    engine.on_class_change(widget)
+    handle_class_change(engine, widget)
 
     assert ctx.pre_polish_size is None, "pre_polish_size must be cleared after class-change evaluation"
     destroy(widget)
@@ -881,7 +882,7 @@ def test_class_change_snapshots_size_before_polish(_app: QApplication) -> None:
 
     engine.evaluator.resolve_current_raw = spy_resolve  # type: ignore[method-assign]
     widget.setProperty("class", "x wide")
-    engine.on_class_change(widget)
+    handle_class_change(engine, widget)
 
     # At least one resolve call must have seen the pre-polish snapshot.
     assert any(snap == (45, 25) for snap in captured), f"expected (45, 25) in {captured}"

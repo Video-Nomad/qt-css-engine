@@ -16,6 +16,7 @@ event_logger = logging.getLogger("qt_css_engine.event")
 
 
 def handle_class_change(engine: TransitionEngine, widget: QWidget) -> None:
+    """Refresh class or tracked attribute changes, invalidating descendant matches too."""
     engine.matcher.invalidate_subtree(widget)
     if not engine.should_evaluate(widget):
         return

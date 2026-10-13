@@ -1390,6 +1390,80 @@ def test_transition_longhands_override_shorthand() -> None:
     assert rule.transitions[0].duration_ms == 400
 
 
+@pytest.mark.parametrize(
+    ("longhand", "duration", "easing", "delay"),
+    [
+        ("transition-duration: 600ms;", 600, "ease-in", 50),
+        ("transition-timing-function: linear;", 300, "linear", 50),
+        ("transition-delay: 100ms;", 300, "ease-in", 100),
+    ],
+)
+def test_transition_timing_longhand_preserves_all(longhand: str, duration: int, easing: str, delay: int) -> None:
+    cleaned, rules = extract_rules(
+        f".box {{ transition: all 300ms ease-in 50ms; {longhand} }}"
+        ".box:hover { color: red; border-radius: 20px; border-style: solid; }"
+    )
+    transition = rules[0].transitions[0]
+    assert len(rules[0].transitions) == 1
+    assert (transition.prop, transition.duration_ms, transition.easing, transition.delay_ms) == (
+        "all",
+        duration,
+        easing,
+        delay,
+    )
+    assert "color:" not in cleaned
+    assert "border-radius:" not in cleaned
+    assert "border-style: solid;" in cleaned
+
+
+def test_transition_shorthand_after_longhands_accumulates_in_order() -> None:
+    _, rules = extract_rules("""
+        .box {
+            transition-property: color;
+            transition-duration: 100ms;
+            transition-timing-function: linear;
+            transition: all 500ms ease-in, color 200ms ease-out;
+        }
+    """)
+    assert [(t.prop, t.duration_ms, t.easing) for t in rules[0].transitions] == [
+        ("color", 100, "linear"),
+        ("all", 500, "ease-in"),
+        ("color", 200, "ease-out"),
+    ]
+
+
+def test_transition_longhand_lists_pair_before_property_expansion() -> None:
+    _, rules = extract_rules("""
+        .box {
+            transition: border-color 100ms ease-in 10ms, all 200ms linear 20ms, opacity 300ms ease-out 30ms;
+            transition-duration: 600ms, 900ms;
+            transition-delay: 40ms, 50ms;
+        }
+    """)
+    specs = {t.prop: (t.duration_ms, t.easing, t.delay_ms) for t in rules[0].transitions}
+    for side in ("top", "right", "bottom", "left"):
+        assert specs[f"border-{side}-color"] == (600, "ease-in", 40)
+    assert specs["all"] == (900, "linear", 50)
+    assert specs["opacity"] == (600, "ease-out", 40)
+
+
+def test_transition_longhands_edit_latest_accumulated_group() -> None:
+    _, rules = extract_rules("""
+        .box {
+            transition: all 300ms ease;
+            transition: color 100ms linear;
+            transition-duration: 200ms;
+            transition: opacity 400ms ease-out;
+            transition-delay: 50ms;
+        }
+    """)
+    assert [(t.prop, t.duration_ms, t.easing, t.delay_ms) for t in rules[0].transitions] == [
+        ("all", 300, "ease", 0),
+        ("color", 200, "linear", 0),
+        ("opacity", 400, "ease-out", 50),
+    ]
+
+
 def test_transition_longhands_stripped_from_cleaned_qss() -> None:
     css = """
     .btn { color: white; transition-property: color; transition-duration: 200ms; }

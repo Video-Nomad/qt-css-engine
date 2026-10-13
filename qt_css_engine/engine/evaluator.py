@@ -23,6 +23,7 @@ from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.constants import BORDER_RADIUS_PROPS, EFFECT_PROPS, SIZE_PROPS
 from qt_css_engine.engine.evaluation import EvaluationCause, ResolvedProperty, ResolvedRuleState
+from qt_css_engine.engine.handlers.clicked import deactivate_clicked, finish_clicked_activation
 from qt_css_engine.geometry.box_model import content_box_px
 from qt_css_engine.geometry.clamp import clamp_border_radius, target_border_radius_box_size
 from qt_css_engine.geometry.natural_size import get_natural_size, get_preferred_size_fallback
@@ -30,11 +31,11 @@ from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve
 from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.cursor import apply_cursor as apply_cursor_style
-from qt_css_engine.style.effects import apply_shadow_to_widget
+from qt_css_engine.style.effects import apply_shadow_to_widget, is_box_shadow_disabled
 from qt_css_engine.utils.color import parse_color
 from qt_css_engine.utils.easing import resolve_easing_curve
 from qt_css_engine.utils.parsing import parse_css_numeric
-from qt_css_engine.utils.qt_helpers import safe_disconnect
+from qt_css_engine.utils.qt_helpers import safe_disconnect, weak_widget_callback
 
 if TYPE_CHECKING:
     from qt_css_engine.css.model import StyleRule, TransitionSpec
@@ -78,7 +79,11 @@ class WidgetEvaluator:
             if cause.snaps_transitions:
                 matched = rules if rules is not None else self._engine.matcher.matching_rules(widget)
                 if not any(
-                    rule.transitions or rule.has_effect_props or rule.has_cursor_prop or rule.has_border_radius_props
+                    rule.transitions
+                    or rule.resets_transitions
+                    or rule.has_effect_props
+                    or rule.has_cursor_prop
+                    or rule.has_border_radius_props
                     for rule in matched
                 ):
                     return
@@ -112,6 +117,36 @@ class WidgetEvaluator:
         if self.apply_prop(ev, prop):
             self._engine.writer.flush_now(widget, ctx)
 
+    def refresh_shadow_policy(self, widget: QWidget) -> None:
+        """Apply a runtime shadow opt-out change without retiming unrelated animations."""
+        if is_box_shadow_disabled(widget):
+            apply_shadow_to_widget(widget, None, self._engine.effect_priority)
+            ctx = self._engine.store.get(widget)
+            if ctx is None:
+                return
+            self._engine.delays.cancel(ctx, "box-shadow")
+            animation = ctx.active_animations.get("box-shadow")
+            callback = ctx.clicked_anim_callbacks.pop("box-shadow", None)
+            if callback is not None and animation is not None:
+                safe_disconnect(animation.anim.finished, callback)
+            ctx.clicked_anim_props.discard("box-shadow")
+            if animation is not None:
+                self._remove_orphan(ctx, ResolvedRuleState(), "box-shadow", animation)
+            ctx.style_box_props.pop("box-shadow", None)
+            opacity = ctx.active_animations.get("opacity")
+            if isinstance(opacity, OpacityAnimation):
+                opacity.refresh_effect()
+            if ":clicked" in ctx.active_pseudos:
+                finish_clicked_activation(self._engine, widget, ctx)
+            return
+        if not self._engine.should_evaluate(widget):
+            return
+        ctx = self._engine.get_context(widget)
+        state = self._collect_state(widget, ctx)
+        if "box-shadow" in state.animated_props:
+            # Re-enable at the current CSS target; no transition from a stale shadow.
+            self.apply_prop(Evaluation(widget, ctx, state, EvaluationCause.POLISH), "box-shadow")
+
     def _collect_state(
         self, widget: QWidget, ctx: WidgetState, *, rules: list[StyleRule] | None = None
     ) -> ResolvedRuleState:
@@ -126,6 +161,10 @@ class WidgetEvaluator:
         for prop in ev.state.animated_props:
             if self.apply_prop(ev, prop):
                 needs_style_update = True
+        if ev.state.transitions_reset and ev.ctx.clicked_anim_props - ev.state.transitions.keys():
+            # Stopping an animation does not emit finished; release a clicked
+            # cycle whose remaining properties were snapped by the reset.
+            finish_clicked_activation(self._engine, ev.widget, ev.ctx)
         return needs_style_update
 
     # ------------------------------------------------------------------
@@ -137,14 +176,24 @@ class WidgetEvaluator:
         if not cause.snaps_transitions or ctx.css_anim_props or ctx.active_animations:
             return False
         return not any(
-            rule.transitions or rule.has_effect_props or rule.has_cursor_prop or rule.has_border_radius_props
+            rule.transitions
+            or rule.resets_transitions
+            or rule.has_effect_props
+            or rule.has_cursor_prop
+            or rule.has_border_radius_props
             for rule in self._engine.matcher.matching_rules(widget)
         )
 
     def collect_rule_state(
         self, widget: QWidget, ctx: WidgetState, *, rules: list[StyleRule] | None = None
     ) -> ResolvedRuleState:
-        return self._engine.cascade.collect(widget, ctx, rules=rules)
+        state = self._engine.cascade.collect(widget, ctx, rules=rules)
+        if is_box_shadow_disabled(widget):
+            state.base_props.pop("box-shadow", None)
+            state.target_props.pop("box-shadow", None)
+            state.transitions.pop("box-shadow", None)
+            state.animated_props.discard("box-shadow")
+        return state
 
     # ------------------------------------------------------------------
     # Per-property decision: resolve -> snap/animate
@@ -153,6 +202,12 @@ class WidgetEvaluator:
     def apply_prop(self, ev: Evaluation, prop: str) -> bool:
         """Drive one property through resolve -> snap/animate. Returns True if a style flush is needed."""
         self._engine.delays.cancel(ev.ctx, prop)
+        if ev.state.transitions_reset and prop not in ev.state.transitions:
+            ev.ctx.class_anim_props.discard(prop)
+            callback = ev.ctx.class_anim_callbacks.pop(prop, None)
+            animation = ev.ctx.active_animations.get(prop)
+            if callback is not None and animation is not None:
+                safe_disconnect(animation.anim.finished, callback)
         if self._is_class_anim_blocked(ev, prop):
             return False
         if self._is_post_clean_noop(ev, prop):
@@ -362,27 +417,31 @@ class WidgetEvaluator:
         gen = ctx.class_anim_gen
         wid = id(widget)
 
-        def _on_done(_w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen) -> None:
-            c = self._engine.store.contexts.get(_wid)
-            if c and _gen == c.class_anim_gen and _p in c.class_anim_props:
-                c.class_anim_props.discard(_p)
-                self.evaluate(_w, cause=EvaluationCause.CLASS_ANIMATION_FINISH)
+        def _on_done(target: QWidget) -> None:
+            c = self._engine.store.contexts.get(wid)
+            if c and gen == c.class_anim_gen and prop in c.class_anim_props:
+                c.class_anim_props.discard(prop)
+                self.evaluate(target, cause=EvaluationCause.CLASS_ANIMATION_FINISH)
 
-        self._replace_finished_callback(anim_obj, prop, ctx.class_anim_callbacks, _on_done)
+        self._replace_finished_callback(
+            anim_obj, prop, ctx.class_anim_callbacks, weak_widget_callback(widget, _on_done)
+        )
 
     def _wire_clicked_callback(self, widget: QWidget, ctx: WidgetState, prop: str, anim_obj: Animation) -> None:
         """Track :clicked anims so the pseudo clears once the last one finishes."""
         gen = ctx.clicked_anim_gen
         wid = id(widget)
 
-        def _on_done(_w: QWidget = widget, _p: str = prop, _wid: int = wid, _gen: int = gen) -> None:
-            c = self._engine.store.contexts.get(_wid)
-            if c and _gen == c.clicked_anim_gen and _p in c.clicked_anim_props:
-                c.clicked_anim_props.discard(_p)
+        def _on_done(target: QWidget) -> None:
+            c = self._engine.store.contexts.get(wid)
+            if c and gen == c.clicked_anim_gen and prop in c.clicked_anim_props:
+                c.clicked_anim_props.discard(prop)
                 if not c.clicked_anim_props:
-                    self._engine.deactivate_clicked(_w, _wid, _gen)
+                    deactivate_clicked(self._engine, target, wid, gen)
 
-        self._replace_finished_callback(anim_obj, prop, ctx.clicked_anim_callbacks, _on_done)
+        self._replace_finished_callback(
+            anim_obj, prop, ctx.clicked_anim_callbacks, weak_widget_callback(widget, _on_done)
+        )
 
     @staticmethod
     def _replace_finished_callback(
@@ -527,21 +586,21 @@ class WidgetEvaluator:
         """Schedule prop's animation to start after delay_ms."""
         wid = id(widget)
 
-        def _fire(_w: QWidget = widget, _p: str = prop, _wid: int = wid) -> None:
-            c = self._engine.store.contexts.get(_wid)
+        def _fire(target: QWidget) -> None:
+            c = self._engine.store.contexts.get(wid)
             if c is not None:
-                c.pending_delays.pop(_p, None)
+                self._engine.delays.cancel(c, prop)
             else:
                 try:
-                    self._engine.delays.cancel(ctx, _p)
+                    self._engine.delays.cancel(ctx, prop)
                 except RuntimeError:
                     pass
             try:
-                self.fire_delayed_prop(_w, _p)
+                self.fire_delayed_prop(target, prop)
             except RuntimeError:
                 pass
 
-        self._engine.delays.schedule(ctx, prop, delay_ms, _fire)
+        self._engine.delays.schedule(ctx, prop, delay_ms, weak_widget_callback(widget, _fire))
 
     def _snap_to_target(self, ev: Evaluation, prop: str, resolved: ResolvedProperty) -> bool:
         """Write the target value instantly. Returns True if a style flush is needed."""
@@ -615,7 +674,7 @@ class WidgetEvaluator:
             curve,
             ctx=ctx,
             box_props=box_props,
-            style_flush_callback=lambda w, c: self._engine.writer.schedule(w, c),
+            style_flush_callback=self._engine.writer.schedule,
             effect_priority=self._engine.effect_priority,
             parent=self._engine,
         )

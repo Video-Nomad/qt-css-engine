@@ -4,6 +4,8 @@
 # (e.g. `.item[active=true]` with `setProperty("active", True)`).
 # The engine must parse, match, cascade and re-evaluate them.
 
+import pytest
+
 from qt_css_engine import TransitionEngine
 from qt_css_engine.animation.color import ColorAnimation
 from qt_css_engine.css.model import StyleRule
@@ -214,11 +216,14 @@ def test_cascade_target_follows_attr_state(_app: QApplication) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_event_router_routes_tracked_attr_change(_app: QApplication) -> None:
+def test_event_router_routes_tracked_attr_change(_app: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
     engine = make_engine(".a[active=true] { background: red; }")
-    calls: list[str] = []
-    engine.on_attr_change = lambda w: calls.append("attr")  # type: ignore[method-assign]
-    engine.on_class_change = lambda w: calls.append("class")  # type: ignore[method-assign]
+    calls: list[tuple[TransitionEngine, QWidget]] = []
+
+    def handle_change(owner: TransitionEngine, target: QWidget) -> None:
+        calls.append((owner, target))
+
+    monkeypatch.setattr("qt_css_engine.engine.event_router.handle_class_change", handle_change)
     widget = QWidget()
 
     class _FakeName:
@@ -241,7 +246,7 @@ def test_event_router_routes_tracked_attr_change(_app: QApplication) -> None:
     EventRouter.dispatch(engine, widget, _FakeEvent(b"active"), QEvent.Type.DynamicPropertyChange)  # type: ignore[arg-type]
     EventRouter.dispatch(engine, widget, _FakeEvent(b"class"), QEvent.Type.DynamicPropertyChange)  # type: ignore[arg-type]
     EventRouter.dispatch(engine, widget, _FakeEvent(b"other"), QEvent.Type.DynamicPropertyChange)  # type: ignore[arg-type]
-    assert calls == ["attr", "class"]
+    assert calls == [(engine, widget), (engine, widget)]
 
 
 # ---------------------------------------------------------------------------

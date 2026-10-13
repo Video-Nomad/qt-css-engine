@@ -7,6 +7,7 @@ from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QTimer
 from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.state.widget_state import WidgetState
+from qt_css_engine.utils.qt_helpers import weak_widget_callback
 
 if TYPE_CHECKING:
     from qt_css_engine.engine.transition_engine import TransitionEngine
@@ -37,7 +38,7 @@ def finish_clicked_activation(engine: TransitionEngine, widget: QWidget, ctx: Wi
     if not ctx.clicked_anim_props:
         wid = id(widget)
         gen = ctx.clicked_anim_gen
-        QTimer.singleShot(0, lambda: deactivate_clicked(engine, widget, wid, gen))
+        QTimer.singleShot(0, weak_widget_callback(widget, lambda target: deactivate_clicked(engine, target, wid, gen)))
 
 
 def deactivate_clicked(engine: TransitionEngine, widget: QWidget, wid: int, gen: int) -> None:

@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING
+from weakref import WeakValueDictionary
 
 from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.qt_compat.QtWidgets import QWidget
@@ -16,29 +17,27 @@ __all__ = ["PolishQueue"]
 class PolishQueue:
     def __init__(self) -> None:
         self.pending: bool = False
-        self.queue: list[QWidget] = []
-        self.force_ids: set[int] = set()
+        self.queue: WeakValueDictionary[int, QWidget] = WeakValueDictionary()
+        self.forced_widgets: WeakValueDictionary[int, QWidget] = WeakValueDictionary()
 
     def enqueue(self, widget: QWidget, *, force: bool = False, schedule_flush: Callable[[], None]) -> None:
         if force:
-            self.force_ids.add(id(widget))
+            self.forced_widgets[id(widget)] = widget
         if not self.pending:
             self.pending = True
             self.queue.clear()
             schedule_flush()
-        self.queue.append(widget)
+        self.queue[id(widget)] = widget
 
     def flush(self, engine: TransitionEngine) -> None:
         self.pending = False
-        widgets, self.queue = self.queue, []
-        force_ids, self.force_ids = self.force_ids, set()
-        seen: set[int] = set()
-        for w in widgets:
+        widgets, self.queue = self.queue, WeakValueDictionary()
+        forced_widgets, self.forced_widgets = self.forced_widgets, WeakValueDictionary()
+        for wid in list(widgets):
+            w = widgets.get(wid)
+            if w is None:
+                continue
             try:
-                wid = id(w)
-                if wid in seen:
-                    continue
-                seen.add(wid)
                 # One shared matching_rules() lookup for hover/active/evaluate.
                 rules: list[StyleRule] | None = None
                 if engine.should_evaluate(w):
@@ -49,7 +48,7 @@ class PolishQueue:
                     # Unmatched widgets still need :active tracking.
                     engine.seed_active_pseudo(w)
                 ctx = engine.store.get(w)
-                if wid in force_ids or ctx is None or not ctx.active_animations:
+                if forced_widgets.get(wid) is w or ctx is None or not ctx.active_animations:
                     engine.evaluate_widget_state(w, cause=EvaluationCause.POLISH, rules=rules)
             except RuntimeError:
                 pass

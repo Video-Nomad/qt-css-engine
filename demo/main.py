@@ -244,6 +244,8 @@ def main() -> None:
         ("effects", "Opacity and shadow"),
         ("easing", "Easing"),
         ("timing", "Delay and duration"),
+        ("transition-none", "Transition: none"),
+        ("dual", "Base + target timing"),
         ("size", "Size and shape"),
         ("dynamic", "Dynamic classes"),
         ("nesting", "Nesting and scope"),
@@ -301,7 +303,7 @@ def main() -> None:
         "Tab through it, click it.",
     )
     stats_frame, stats_row = make_row()
-    for stat in ("10 sections", "6 pseudo-states", "20+ animatable props", ":clicked round-trip"):
+    for stat in (f"{len(nav_items)} sections", "6 pseudo-states", "20+ animatable props", ":clicked round-trip"):
         stat_lbl = QLabel(stat)
         stat_lbl.setProperty("class", "stat")
         stats_row.addWidget(stat_lbl)
@@ -518,7 +520,70 @@ def main() -> None:
     content_layout.addWidget(timing_card)
     cards["timing"] = timing_card
 
-    # ------------------------------------------------- 6. size & shape
+    # ------------------------------------------------- 6. transition reset
+    reset_card, reset_body = make_card(
+        "Transition: none",
+        "Hover each button to compare the same color and shape changes. "
+        "A reset clears accumulated timings; a later declaration can enable a single property again.",
+    )
+    reset_grid_frame = QFrame()
+    reset_grid = QGridLayout(reset_grid_frame)
+    reset_grid.setContentsMargins(0, 0, 0, 0)
+    reset_grid.setHorizontalSpacing(16)
+    reset_grid.setVerticalSpacing(18)
+    reset_examples = [
+        ("reset-btn", "Animated baseline", "all 900ms + color 1400ms: shape, background, border and text animate."),
+        ("reset-btn reset-off", "Everything snaps", "transition: none clears both the all fallback and explicit text timing."),
+        ("reset-btn reset-property", "Longhand reset", "transition-property: none gives the same immediate changes."),
+        ("reset-btn reset-text", "Only text animates", "none, then color 600ms: text eases; the background, border and corners snap."),
+        ("reset-btn reset-hover", "Snap in, animate out", "none on :hover: entering snaps; leaving restores the base timings."),
+        ("reset-btn reset-stop", "Hover, then press and hold", "Press during the animation to stop it and snap to green. Release to animate back."),
+    ]
+    for i, (cls, text, hint) in enumerate(reset_examples):
+        example = QVBoxLayout()
+        example.setSpacing(6)
+        reset_btn = QPushButton(text)
+        reset_btn.setProperty("class", cls)
+        reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        example.addWidget(reset_btn)
+        example.addWidget(make_hint(hint))
+        reset_grid.addLayout(example, i // 2, i % 2)
+    reset_grid.setColumnStretch(0, 1)
+    reset_grid.setColumnStretch(1, 1)
+    reset_body.addWidget(reset_grid_frame)
+    content_layout.addWidget(reset_card)
+    cards["transition-none"] = reset_card
+
+    # ------------------------------------------------- 7. base + target transition
+    dual_card, dual_body = make_card(
+        "Base + target transition",
+        "The transition is defined on both selectors: hover-in uses the :hover timing "
+        "(fast ease-in); hover-out falls back to the base timing (slow ease-out).",
+    )
+    # Stacked in a column: size transitions need vertical stacking so the
+    # horizontal growth (padding, min/max-width, width) isn't constrained
+    # by siblings competing for the same row space.
+    dual_col_frame = QFrame()
+    dual_col_layout = QVBoxLayout(dual_col_frame)
+    dual_col_layout.setContentsMargins(0, 0, 0, 0)
+    dual_col_layout.setSpacing(14)
+    dual_examples = [
+        ("dual-btn", "Background", "bg #7c80c7 → #417800: in 200ms ease-in, out 1s ease-out."),
+        ("dual-pad-btn", "Padding", "padding 10/16 → 20/150px: in 200ms ease-in, out 1s ease-out."),
+        ("dual-minmax-btn", "Min/max width", "110 → 350px via min/max-width: in 200ms, out 1s."),
+        ("dual-width-btn", "Width", "110 → 350px via plain width: in 200ms, out 1s."),
+    ]
+    for cls, text, hint in dual_examples:
+        dual_btn = QPushButton(text)
+        dual_btn.setProperty("class", cls)
+        dual_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        dual_col_layout.addWidget(dual_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        dual_col_layout.addWidget(make_hint(hint))
+    dual_body.addWidget(dual_col_frame)
+    content_layout.addWidget(dual_card)
+    cards["dual"] = dual_card
+
+    # ------------------------------------------------- 8. size & shape
     size_card, size_body = make_card(
         "Size & shape morph",
         "Width constraints, padding, border and type metrics all interpolate and re-lay-out smoothly.",
@@ -566,7 +631,7 @@ def main() -> None:
     content_layout.addWidget(size_card)
     cards["size"] = size_card
 
-    # ------------------------------------------------- 7. dynamic classes
+    # ------------------------------------------------- 9. dynamic classes
     dyn_card, dyn_body = make_card(
         "Dynamic classes",
         "Changing `class` re-runs the cascade and animates. Click the tabs, cycle the row, or watch the timer.",
@@ -625,7 +690,7 @@ def main() -> None:
     content_layout.addWidget(dyn_card)
     cards["dynamic"] = dyn_card
 
-    # ------------------------------------------------- 8. nesting & scope
+    # ------------------------------------------------- 10. nesting & scope
     nest_card, nest_body = make_card(
         "Nesting & scope",
         "Descendant selectors match through the tree. Hover the containers — children react to ancestor state.",
@@ -693,7 +758,7 @@ def main() -> None:
     content_layout.addWidget(nest_card)
     cards["nesting"] = nest_card
 
-    # ------------------------------------------------- 9. attributes & specificity
+    # ------------------------------------------------- 11. attributes & specificity
     attr_card, attr_body = make_card(
         "Attributes & specificity",
         "Dynamic properties drive styles via [attr=value] (bare or quoted). "
@@ -738,7 +803,7 @@ def main() -> None:
     content_layout.addWidget(attr_card)
     cards["attrs"] = attr_card
 
-    # ------------------------------------------------- 10. playground
+    # ------------------------------------------------- 12. playground
     play_card, play_body = make_card(
         "Playground",
         "Runtime widgets, visibility toggles and window focus. New widgets are picked up via Polish events.",

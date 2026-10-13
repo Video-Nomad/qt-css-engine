@@ -10,6 +10,8 @@ Subcontrols (e.g `::item`, `::handle`) are not supported because they are not re
 
 This engine was made primarily for use in [YASB](https://github.com/amnweb/yasb) project and this will be the main focus for now, but it can be integrated into any Qt application.
 
+This is not a full CSS3 spec port. It has some very important Qt-specific differences, especially when it comes to transition property accumulation vs overriding.
+
 **WARNING: This project is still in early development, very experimental and is not ready for production use. There will be bugs and breaking changes.**
 
 ## Python and Qt version
@@ -93,7 +95,25 @@ transition-timing-function: ease, linear;
 transition-delay: 0ms, 50ms;
 ```
 
-Longhands override the shorthand when both are declared in the same block. Values cycle per the CSS spec when list lengths differ.
+### Accumulation and cancellation
+
+Longhands update the previous shorthands instead of overriding them completely.
+
+Transition declarations accumulate across matching rules. Explicit property timings take precedence over `all`. `all` supplies timing for the remaining supported properties.
+
+`transition: none` or `transition-property: none` will disable the previous transitions. Specifying a new transition will re-enable it for that property.
+
+```css
+.btn {
+    transition: all 300ms;
+}
+.btn.quiet {
+    transition: none;
+    transition: color 150ms; /* Only color animates. */
+}
+```
+
+Timing-only longhands after `none` do not enable properties.
 
 ### Time units
 
@@ -170,6 +190,21 @@ Numeric values accepted everywhere a length is listed: `<n>px`, `<n>pt`, `<n>em`
 | `opacity` | Widget opacity — not native QSS, applied via `QGraphicsOpacityEffect` | `0.0`–`1.0` | ✅ | ✅ |
 | `box-shadow` | Drop shadow — not native QSS, applied via `QGraphicsDropShadowEffect`. No `inset`, `spread` is ignored. First shadow wins when multiple are declared. | `<x> <y> [blur] [spread] <color>` | ✅ | ✅ |
 | `cursor` | Mouse cursor — Qt QSS ignores `cursor`, applied via `setCursor()` | `default`, `pointer`, `text`, `crosshair`, `wait`, `progress`, `help`, `move`, `grab`, `grabbing`, `copy`, `alias`, `not-allowed`, `no-drop`, `cell`, `all-scroll`, `n-resize`, `s-resize`, `e-resize`, `w-resize`, `ne-resize`, `nw-resize`, `se-resize`, `sw-resize`, `ns-resize`, `ew-resize`, `nesw-resize`, `nwse-resize`, `row-resize`, `col-resize`, `none` | ❌ | ✅ |
+
+### Disabling shadows on a widget
+
+`box-shadow` and `text-shadow` can be disabled on a specific widget by setting `cssEngineDisableShadow` property to True
+
+```python
+widget.setProperty("cssEngineDisableShadow", True)
+```
+
+This is useful for translucent frameless windows or edge-to-edge surfaces where a Qt drop shadow can extend outside the
+window's backing store and cause `UpdateLayeredWindowIndirect` failures on Windows.
+
+This exists mainly to avoid user error when custom css files are supported by the parent application.
+
+Not setting `box-shadow/text-shadow` on those widgets will also work, of course.
 
 ## Environment variables
 

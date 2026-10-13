@@ -10,6 +10,7 @@ from qt_css_engine import TransitionEngine
 from qt_css_engine.animation.factory import create_animator
 from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.css.parser import extract_rules
+from qt_css_engine.engine.handlers.window import handle_window_activate
 from qt_css_engine.qt_compat import qt_delete
 from qt_css_engine.qt_compat.QtCore import QEasingCurve, Qt
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QFrame, QLabel, QWidget
@@ -75,7 +76,7 @@ def test_window_activate_skips_child_of_other_window(_app: QApplication) -> None
     child_b.setProperty("class", "t")
     engine.seed_active_pseudo(child_b)
     try:
-        engine.on_window_activate(window_a)
+        handle_window_activate(engine, window_a)
         assert ":active" not in engine.get_context(child_b).active_pseudos
     finally:
         destroy(child_b)

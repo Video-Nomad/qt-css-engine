@@ -1,7 +1,25 @@
-"""Animation base — shared steps-reversal and spec handling."""
+"""Animation base — non-owning widget targets and shared steps reversal."""
+
+import weakref
 
 from qt_css_engine.animation.steps import steps_seek_ms
-from qt_css_engine.qt_compat.QtCore import QEasingCurve
+from qt_css_engine.qt_compat.QtCore import QEasingCurve, QObject
+from qt_css_engine.qt_compat.QtWidgets import QWidget
+
+
+class WidgetAnimation(QObject):
+    """Animations observe their widget; the application controls its lifetime."""
+
+    def __init__(self, widget: QWidget, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._widget_ref = weakref.ref(widget)
+
+    @property
+    def widget(self) -> QWidget:
+        widget = self._widget_ref()
+        if widget is None:
+            raise RuntimeError("Animation widget has been collected")
+        return widget
 
 
 class StepsReversalMixin:

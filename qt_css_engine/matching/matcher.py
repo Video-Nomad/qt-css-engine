@@ -64,7 +64,13 @@ class RuleMatcher:
             has_effect = rule.has_effect_props
             has_cursor = rule.has_cursor_prop
             has_radius = rule.has_border_radius_props
-            if not rule.transitions and not has_effect and not has_cursor and not has_radius:
+            if (
+                not rule.transitions
+                and not rule.resets_transitions
+                and not has_effect
+                and not has_cursor
+                and not has_radius
+            ):
                 continue
             if has_effect or any(t.prop in ("opacity", "all") for t in rule.transitions):
                 self.index.flags.has_effect = True
