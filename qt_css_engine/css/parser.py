@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 import tinycss2
-from tinycss2.ast import Node
+from tinycss2.ast import Node, QualifiedRule
 
 from qt_css_engine.css.gradients import translate_gradients
 from qt_css_engine.css.model import StyleRule, TransitionSpec
@@ -146,14 +146,18 @@ def _parse_transition_segment(tokens: list[Any]) -> tuple[str, int, str, int] | 
 
 
 def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
-    """Parse a stylesheet into cleaned QSS and a StyleRule list."""
-    raw_rules = tinycss2.parse_stylesheet(stylesheet, skip_comments=True, skip_whitespace=True)
+    """Parse a stylesheet into cleaned QSS and rules, splitting selector lists."""
+    # Workaround for Qt selector-list bug
+    raw_rules = [
+        QualifiedRule(raw_rule.source_line, raw_rule.source_column, prelude, raw_rule.content)
+        for raw_rule in tinycss2.parse_stylesheet(stylesheet, skip_comments=True, skip_whitespace=True)
+        if raw_rule.type == "qualified-rule"
+        for prelude in _split_by_comma(raw_rule.prelude)
+    ]
     rules: list[StyleRule] = []
 
     for raw_rule in raw_rules:
-        if raw_rule.type != "qualified-rule":
-            continue
-        raw_selector: str = tinycss2.serialize(raw_rule.prelude).strip()
+        selector: str = tinycss2.serialize(raw_rule.prelude).strip()
         decls = tinycss2.parse_blocks_contents(raw_rule.content, skip_comments=True, skip_whitespace=True)
 
         transitions: list[TransitionSpec] = []
@@ -215,25 +219,24 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
 
         transitions.extend(_combine_transition_longhands(_t_props, _t_durations, _t_easings, _t_delays))
 
-        for selector in (s.strip() for s in raw_selector.split(",")):
-            base, pseudo_set = split_selector(selector)
-            is_subcontrol = "::" in base
-            order = len(rules)
-            rules.append(
-                StyleRule(
-                    selector=selector,
-                    base_selector=base,
-                    properties=props,
-                    pseudo_set=pseudo_set,
-                    transitions=[] if is_subcontrol else transitions,
-                    segments=base.split(),
-                    subcontrol=is_subcontrol,
-                    has_attrs="[" in base,
-                    specificity=compute_specificity(base, pseudo_set),
-                    order=order,
-                    resets_transitions=resets_transitions and not is_subcontrol,
-                )
+        base, pseudo_set = split_selector(selector)
+        is_subcontrol = "::" in base
+        order = len(rules)
+        rules.append(
+            StyleRule(
+                selector=selector,
+                base_selector=base,
+                properties=props,
+                pseudo_set=pseudo_set,
+                transitions=[] if is_subcontrol else transitions,
+                segments=base.split(),
+                subcontrol=is_subcontrol,
+                has_attrs="[" in base,
+                specificity=compute_specificity(base, pseudo_set),
+                order=order,
+                resets_transitions=resets_transitions and not is_subcontrol,
             )
+        )
 
     animated_map: dict[str, set[str]] = {}
     for rule in rules:
@@ -245,24 +248,19 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
 
     cleaned_parts: list[str] = []
     for raw_rule in raw_rules:
-        if raw_rule.type != "qualified-rule":
-            continue
-        selector: str = tinycss2.serialize(raw_rule.prelude).strip()
+        selector = tinycss2.serialize(raw_rule.prelude).strip()
         decls = tinycss2.parse_declaration_list(raw_rule.content, skip_comments=True, skip_whitespace=True)
-        _, pseudo_set = split_selector(selector.split(",")[0].strip())
+        base, pseudo_set = split_selector(selector)
         # Attr-conditional blocks ([active=true]) are engine-managed like pseudo
         # blocks: animated props are stripped so Qt doesn't fight the transition.
         has_attr_block = "[" in selector
-        animated_props: set[str] = set()
-        for sel_part in (s.strip() for s in selector.split(",")):
-            base_part, _ = split_selector(sel_part)
-            animated_props |= animated_map.get(base_part, set())
-            if "[" in base_part:
-                # Attr-conditional base (`.item[active=true]`) inherits the
-                # transitions declared on its attr-stripped base (`.item`),
-                # mirroring how `:hover` reuses the base rule's transitions.
-                stripped = _WS_RE.sub(" ", _ATTR_BLOCK_RE.sub("", base_part)).strip()
-                animated_props |= animated_map.get(stripped, set())
+        animated_props = animated_map.get(base, set()).copy()
+        if has_attr_block:
+            # Attr-conditional base (`.item[active=true]`) inherits the
+            # transitions declared on its attr-stripped base (`.item`),
+            # mirroring how `:hover` reuses the base rule's transitions.
+            stripped = _WS_RE.sub(" ", _ATTR_BLOCK_RE.sub("", base)).strip()
+            animated_props |= animated_map.get(stripped, set())
         new_body_lines: list[str] = []
         for decl in decls:
             if decl.type != "declaration":
