@@ -11,6 +11,7 @@ from qt_css_engine.engine.handlers import lifecycle as lifecycle_handler
 from qt_css_engine.qt_compat.QtCore import QTimer
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QWidget
 from qt_css_engine.state.widget_state import WidgetState
+from qt_css_engine.style.effect_policy import clear_engine_effect
 
 if TYPE_CHECKING:
     from qt_css_engine.css.model import StyleRule
@@ -109,7 +110,7 @@ def reeval_reload_widgets_deferred(
             if engine.should_evaluate(widget):
                 engine.evaluate_widget_state(widget, cause=EvaluationCause.RULE_RELOAD)
             else:
-                widget.setGraphicsEffect(None)
+                clear_engine_effect(widget)
         except RuntimeError:
             pass
     if not engine.matcher.index.flags.has_effect and not engine.matcher.index.flags.has_border_radius:

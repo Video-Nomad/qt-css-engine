@@ -193,6 +193,11 @@ Numeric values accepted everywhere a length is listed: `<n>px`, `<n>pt`, `<n>em`
 | `box-shadow` | Drop shadow — not native QSS, applied via `QGraphicsDropShadowEffect`. No `inset`, `spread` is ignored. First shadow wins when multiple are declared. | `<x> <y> [blur] [spread] <color>` | ✅ | ✅ |
 | `cursor` | Mouse cursor — Qt QSS ignores `cursor`, applied via `setCursor()` | `default`, `pointer`, `text`, `crosshair`, `wait`, `progress`, `help`, `move`, `grab`, `grabbing`, `copy`, `alias`, `not-allowed`, `no-drop`, `cell`, `all-scroll`, `n-resize`, `s-resize`, `e-resize`, `w-resize`, `ne-resize`, `nw-resize`, `se-resize`, `sw-resize`, `ns-resize`, `ew-resize`, `nesw-resize`, `nwse-resize`, `row-resize`, `col-resize`, `none` | ❌ | ✅ |
 
+### About existing hardcoded QGraphicsEffect instances
+
+Application-installed graphics effects are preserved. CSS `opacity`, `box-shadow`, and `text-shadow` are skipped
+wherever they would conflict with those effects.
+
 ### Disabling shadows on a widget
 
 `box-shadow` and `text-shadow` can be disabled on a specific widget by setting `cssEngineDisableShadow` property to True

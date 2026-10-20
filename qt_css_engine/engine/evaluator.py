@@ -31,6 +31,7 @@ from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEasingCurve
 from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.cursor import apply_cursor as apply_cursor_style
+from qt_css_engine.style.effect_policy import clear_engine_effect, release_effect_scope
 from qt_css_engine.style.effects import apply_shadow_to_widget, is_box_shadow_disabled
 from qt_css_engine.utils.color import parse_color
 from qt_css_engine.utils.easing import resolve_easing_curve
@@ -486,6 +487,13 @@ class WidgetEvaluator:
         else:
             self._stop_orphan_effect(orphan)
         del ctx.active_animations[prop]
+        if isinstance(orphan, (OpacityAnimation, BoxShadowHandle)) and not any(
+            isinstance(animation, (OpacityAnimation, BoxShadowHandle)) for animation in ctx.active_animations.values()
+        ):
+            try:
+                release_effect_scope(orphan.widget)
+            except RuntimeError:
+                pass
         orphan.deleteLater()
         return self._needs_style_flush(orphan)
 
@@ -524,7 +532,7 @@ class WidgetEvaluator:
             apply_shadow_to_widget(orphan.widget, None, self._engine.effect_priority)
         elif isinstance(orphan, OpacityAnimation):
             try:
-                orphan.widget.setGraphicsEffect(None)
+                clear_engine_effect(orphan.widget)
             except RuntimeError:
                 pass
 
