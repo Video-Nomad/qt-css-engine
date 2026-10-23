@@ -9,6 +9,7 @@ from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.state.widget_state import WidgetState
+from qt_css_engine.style.effect_policy import clear_engine_effect, release_effect_scope
 from qt_css_engine.style.effects import apply_shadow_to_widget
 from qt_css_engine.utils.qt_helpers import safe_disconnect
 
@@ -85,7 +86,9 @@ def stop_animations(engine: TransitionEngine, ctx: WidgetState, *, clear_effects
                 if isinstance(anim_obj, BoxShadowHandle):
                     apply_shadow_to_widget(anim_obj.widget, None, engine.effect_priority)
                 elif isinstance(anim_obj, OpacityAnimation):
-                    anim_obj.widget.setGraphicsEffect(None)
+                    clear_engine_effect(anim_obj.widget)
+                if isinstance(anim_obj, (BoxShadowHandle, OpacityAnimation)):
+                    release_effect_scope(anim_obj.widget)
             anim_obj.deleteLater()
         except RuntimeError:
             pass

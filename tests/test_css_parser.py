@@ -841,11 +841,83 @@ def test_comma_selector_animated_prop_stripped_from_pseudo_blocks() -> None:
         assert "background-color" not in body
 
 
-def test_comma_selector_cleaned_qss_contains_each_block() -> None:
-    css = "#btn1, #btn2 { background-color: steelblue; }"
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (".my-class1", ".my-class2"),
+        ("QListView::item", "QTreeView::item"),
+        ("QListView::item:hover", "QTreeView::item:hover"),
+    ],
+)
+def test_comma_selector_cleaned_qss_contains_each_block(first: str, second: str) -> None:
+    css = f"{first},\n{second} {{ background: red; }}"
     cleaned, _ = extract_rules(css)
-    # The original comma-grouped block should appear in the cleaned output
-    assert "steelblue" in cleaned
+    assert cleaned == f"{first} {{\n    background-color: red;\n}}\n\n{second} {{\n    background-color: red;\n}}"
+
+
+def test_comma_selector_preserves_stylesheet_order_and_duplicates() -> None:
+    css = """
+    .before { color: black; }
+    .b, .a, .b { color: red; }
+    .a { color: blue; }
+    .c, .b { color: green; }
+    """
+    cleaned, rules = extract_rules(css)
+    expected = [
+        (".before", "black"),
+        (".b", "red"),
+        (".a", "red"),
+        (".b", "red"),
+        (".a", "blue"),
+        (".c", "green"),
+        (".b", "green"),
+    ]
+    assert cleaned == "\n\n".join(f"{selector} {{\n    color: {color};\n}}" for selector, color in expected)
+    assert [(rule.selector, rule.properties["color"]) for rule in rules] == expected
+    assert [rule.order for rule in rules] == list(range(len(expected)))
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        '.item[tags="one,two"]:hover',
+        '.item[tags="one,two"][state="ready"]',
+        "QWidget:is(.one, .two)",
+        r".one\,two",
+    ],
+)
+def test_comma_selector_preserves_commas_within_selector(selector: str) -> None:
+    css = f"{selector}, .other {{ color: rgba(1, 2, 3, 0.5); }}"
+    cleaned, rules = extract_rules(css)
+    assert [rule.selector for rule in rules] == [selector, ".other"]
+    assert cleaned == (
+        f"{selector} {{\n    color: rgba(1, 2, 3, 0.5);\n}}\n\n.other {{\n    color: rgba(1, 2, 3, 0.5);\n}}"
+    )
+
+
+@pytest.mark.parametrize("selectors", [".box, .box:hover", ".box:hover, .box"])
+def test_comma_selector_cleans_base_and_pseudo_independently(selectors: str) -> None:
+    css = f"{selectors} {{ color: red; transition: color 300ms; }}"
+    cleaned, rules = extract_rules(css)
+    assert cleaned_block(cleaned, ".box {") == "color: red;"
+    assert cleaned_block(cleaned, ".box:hover") == ""
+    assert "transition" not in cleaned
+    assert all(rule.transitions[0].prop == "color" for rule in rules)
+
+
+@pytest.mark.parametrize("conditional", [".animated:hover", ".animated[active=true]"])
+@pytest.mark.parametrize("conditional_first", [False, True])
+def test_comma_selector_cleans_each_selectors_animated_properties(conditional: str, conditional_first: bool) -> None:
+    other = "QListView::item:hover"
+    selectors = f"{conditional}, {other}" if conditional_first else f"{other}, {conditional}"
+    css = f"""
+    .animated {{ transition: color 300ms; }}
+    {selectors} {{ color: red; background: blue; }}
+    """
+    cleaned, rules = extract_rules(css)
+    assert cleaned_block(cleaned, conditional) == "background-color: blue;"
+    assert cleaned_block(cleaned, other) == "color: red;\n    background-color: blue;"
+    assert get_rule(rules, other).transitions == []
 
 
 # ---------------------------------------------------------------------------
