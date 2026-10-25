@@ -40,6 +40,15 @@ engine = TransitionEngine(rules)
 app.installEventFilter(engine)
 ```
 
+## Local styles
+
+Optionally, widget-local styles are collected once at first `Polish` with
+`TransitionEngine(rules, collect_widget_styles=True)`; install the engine before widgets
+are polished. Automatic collection does not detect later stylesheet changes.
+
+Apply or update styles explicitly with `engine.set_widget_stylesheet(widget, qss)`.
+`set_widget_stylesheet()` works regardless of whether `collect_widget_styles` is set.
+
 ## Simple transition examples
 
 ```css

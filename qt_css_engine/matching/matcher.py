@@ -78,6 +78,8 @@ class RuleMatcher:
                 self.index.flags.has_border_radius = True
             if last_seg is None:
                 continue
+            if last_seg.obj_name is None and last_seg.tag is None and not last_seg.classes:
+                self.index.quick.unconditional = True
             if last_seg.obj_name is not None:
                 self.index.quick.ids.add(last_seg.obj_name)
             if last_seg.tag is not None:
@@ -135,6 +137,9 @@ class RuleMatcher:
 
     def invalidate_widget_id(self, wid: int) -> None:
         self.widget_cache.invalidate(wid)
+
+    def forget_widget_id(self, wid: int) -> None:
+        self.invalidate_widget_id(wid)
 
     def is_ancestor_relevant(self, ident: WidgetIdentity) -> bool:
         """Whether a widget identity can anchor a descendant selector."""
@@ -199,6 +204,8 @@ class RuleMatcher:
 
     def should_evaluate(self, widget: QWidget, ctx: WidgetState | None) -> bool:
         if bool(ctx and ctx.active_animations):
+            return True
+        if self.index.quick.unconditional:
             return True
         if self.index.quick.ids and widget.objectName() in self.index.quick.ids:
             return True

@@ -24,13 +24,13 @@ class CascadeEvaluator:
 
     def collect(self, widget: QWidget, ctx: WidgetState, *, rules: list[StyleRule] | None = None) -> ResolvedRuleState:
         state = ResolvedRuleState()
-        # Per-prop winners: CSS2 (specificity, order) with the engine's pseudo
+        # Widget source rank precedes CSS2 specificity/order. The engine's pseudo
         # priority kept as a tiebreak inside equal specificity so :pressed still
         # beats :hover (and :clicked beats :pressed) regardless of source order.
-        base_best: dict[str, tuple[tuple[int, int, int], int]] = {}
-        target_best: dict[str, tuple[tuple[int, int, int], int, int]] = {}
-        trans_best: dict[str, tuple[tuple[int, int, int], int, int]] = {}
-        reset_best: tuple[tuple[int, int, int], int, int] | None = None
+        base_best: dict[str, tuple[int, tuple[int, int, int], int]] = {}
+        target_best: dict[str, tuple[int, tuple[int, int, int], int, int]] = {}
+        trans_best: dict[str, tuple[int, tuple[int, int, int], int, int]] = {}
+        reset_best: tuple[int, tuple[int, int, int], int, int] | None = None
         pseudos = ctx.active_pseudos
         matched = rules if rules is not None else self._matcher.matching_rules(widget)
         for rule in matched:
@@ -38,14 +38,14 @@ class CascadeEvaluator:
             rule_in_target = attrs_match and (not rule.pseudo_set or rule.pseudo_set <= pseudos)
             priority = sum(self._priority.get(p, 0) for p in rule.pseudo_set) if rule_in_target else -1
             if rule_in_target and rule.resets_transitions:
-                reset_key = (rule.specificity, priority, rule.order)
+                reset_key = (rule.scope_rank, rule.specificity, priority, rule.order)
                 if reset_best is None or reset_key > reset_best:
                     reset_best = reset_key
             for trans in rule.transitions:
                 state.animated_props.add(trans.prop)
                 if rule_in_target:
-                    key = (rule.specificity, priority, rule.order)
-                    if key >= trans_best.get(trans.prop, ((-1, -1, -1), -1, -1)):
+                    key = (rule.scope_rank, rule.specificity, priority, rule.order)
+                    if key >= trans_best.get(trans.prop, (-1, (-1, -1, -1), -1, -1)):
                         state.transitions[trans.prop] = trans
                         trans_best[trans.prop] = key
             # Attr-conditional rules ([active=true]) are target-only like pseudo
@@ -53,14 +53,14 @@ class CascadeEvaluator:
             # the animation start point would already equal the target.
             if not rule.pseudo_set and not rule.has_attrs:
                 for prop, val in rule.properties.items():
-                    key = (rule.specificity, rule.order)
-                    if key >= base_best.get(prop, ((-1, -1, -1), -1)):
+                    key = (rule.scope_rank, rule.specificity, rule.order)
+                    if key >= base_best.get(prop, (-1, (-1, -1, -1), -1)):
                         state.base_props[prop] = val
                         base_best[prop] = key
             if rule_in_target:
                 for prop, val in rule.properties.items():
-                    key = (rule.specificity, priority, rule.order)
-                    if key >= target_best.get(prop, ((-1, -1, -1), -1, -1)):
+                    key = (rule.scope_rank, rule.specificity, priority, rule.order)
+                    if key >= target_best.get(prop, (-1, (-1, -1, -1), -1, -1)):
                         state.target_props[prop] = val
                         target_best[prop] = key
         if reset_best is not None:

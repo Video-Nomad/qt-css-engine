@@ -13,6 +13,7 @@ from qt_css_engine.engine.event_router import EventRouter
 from qt_css_engine.engine.handlers import lifecycle as lifecycle_handler
 from qt_css_engine.engine.handlers import reload as reload_handler
 from qt_css_engine.engine.handlers.polish import PolishQueue
+from qt_css_engine.matching.local import WidgetStyleMatcher
 from qt_css_engine.matching.matcher import RuleMatcher
 from qt_css_engine.qt_compat.QtCore import QAbstractAnimation, QEvent, QObject, Qt, QTimer
 from qt_css_engine.qt_compat.QtWidgets import QAbstractButton, QWidget
@@ -20,6 +21,7 @@ from qt_css_engine.state.pseudo import PseudoMachine
 from qt_css_engine.state.store import WidgetStore
 from qt_css_engine.state.suppress import is_suppressed
 from qt_css_engine.state.widget_state import WidgetState
+from qt_css_engine.style.cursor import apply_cursor
 from qt_css_engine.style.writer import StyleWriter
 from qt_css_engine.utils.qt_helpers import safe_disconnect, weak_widget_callback
 
@@ -56,6 +58,8 @@ class TransitionEngine(QObject):
         parent: QObject | None = None,
         startup_delay_ms: int = 100,
         effect_priority: str = "opacity",
+        *,
+        collect_widget_styles: bool = False,
     ) -> None:
         """
         Initialise the engine with a parsed rule set.
@@ -68,9 +72,15 @@ class TransitionEngine(QObject):
 
         effect_priority: which effect wins the single QGraphicsEffect slot — "opacity"
         or "box-shadow". When both are declared the loser is silently dropped.
+
+        collect_widget_styles: capture widget-local QSS at first Polish, caching
+        repeated text and respecting widget/ancestor stylesheet precedence.
+        Install the filter before polishing widgets. Later stylesheet replacements
+        are not observed; this option does not install a StyleChange watcher.
+        Explicit set_widget_stylesheet() registration works independently of this option.
         """
         super().__init__(parent)
-        self.matcher = RuleMatcher(rules)
+        self.matcher = WidgetStyleMatcher(rules) if collect_widget_styles else RuleMatcher(rules)
         self.cascade = CascadeEvaluator(self.matcher, PseudoMachine.priority)
         self.effect_priority = effect_priority
 
@@ -154,7 +164,82 @@ class TransitionEngine(QObject):
             # Register cleanup for destruction and collection; the store stays pure storage.
             ctx = self.store.get_or_create(widget)
             lifecycle_handler.track_widget_lifetime(self, widget)
+        if isinstance(self.matcher, WidgetStyleMatcher):
+            ctx.style.local_sheet = self.matcher.sources.get(id(widget))
         return ctx
+
+    def discover_widget_styles(self, widget: QWidget) -> None:
+        if not isinstance(self.matcher, WidgetStyleMatcher):
+            return
+        for owner, affected in self.matcher.discover(widget):
+            source = self.matcher.sources[id(owner)]
+            lifecycle_handler.track_widget_lifetime(self, owner)
+            ctx = self.store.get(owner)
+            if ctx is None and source.needs_cleaning:
+                ctx = self.store.get_or_create(owner)
+            if ctx is not None:
+                ctx.style.local_sheet = source
+            if source.needs_cleaning:
+                self.queue_polish_evaluation(owner)
+            for target in affected:
+                if self.should_evaluate(target):
+                    self.queue_polish_evaluation(target, force=True)
+
+    def prepare_widget_style(self, widget: QWidget) -> None:
+        """Clean newly discovered engine declarations once, outside the Polish burst."""
+        ctx = self.store.get(widget)
+        if ctx is not None and ctx.style.local_sheet is not None:
+            if ctx.style.local_sheet.needs_cleaning and ctx.applied_style is None:
+                self.writer.flush_now(widget, ctx)
+
+    def set_widget_stylesheet(self, widget: QWidget, stylesheet: str) -> None:
+        """Cache full local CSS and send only cleaned QSS to Qt.
+
+        Works with or without collect_widget_styles. Without automatic discovery,
+        only explicitly registered local sheets enter the engine's scoped cascade.
+        Use this for engine extensions: Qt can parse raw QSS before any Polish event.
+        Explicit replacements invalidate the widget's subtree and discard old
+        animations; evaluation remains deferred through the Polish queue.
+        """
+        if not isinstance(self.matcher, WidgetStyleMatcher):
+            # Activate local-source support only when requested. The default path
+            # keeps its existing matcher and never reads widgets' authored QSS.
+            self.matcher = WidgetStyleMatcher(self.matcher.rules, auto_discovery=False)
+            self.cascade = CascadeEvaluator(self.matcher, PseudoMachine.priority)
+        source, affected = self.matcher.set_source(widget, stylesheet)
+        lifecycle_handler.track_widget_lifetime(self, widget)
+        for target in (widget, *affected):
+            existing = self.store.get(target)
+            if existing is None:
+                continue
+            reload_handler.reset_context_for_reload(self, existing)
+            existing.css_anim_props.clear()
+            existing.style_box_props.clear()
+            existing.style.local_overlay_selectors = None
+            existing.style_flush_pending = False
+            apply_cursor(target, existing, {})
+        ctx = self.store.get(widget)
+        if ctx is None and source is not None and source.needs_cleaning:
+            ctx = self.store.get_or_create(widget)
+        qss = source.qss if source is not None else ""
+        if ctx is not None:
+            ctx.style.local_sheet = source
+            ctx.applied_style = qss
+        widget.setStyleSheet(qss)
+        for target in affected:
+            existing = self.store.get(target)
+            if existing is not None and existing.applied_style is not None:
+                # Descendants may no longer pass the evaluation gate after a
+                # source is removed. Release their old overlays now, retaining
+                # each descendant's independently authored local sheet.
+                own_source = existing.style.local_sheet
+                base_qss = own_source.qss if own_source is not None else ""
+                existing.applied_style = base_qss
+                if target.styleSheet() != base_qss:
+                    target.setStyleSheet(base_qss)
+        for target in (widget, *affected):
+            if target.testAttribute(Qt.WidgetAttribute.WA_WState_Polished):
+                self.queue_polish_evaluation(target, force=True)
 
     # -------------------------------------------------------------------------
     # Event filtering and pseudo-state tracking
@@ -175,6 +260,9 @@ class TransitionEngine(QObject):
         # Ignore Polish events triggered by our own internal style writes.
         if is_suppressed(ctx):
             return
+        if isinstance(self.matcher, WidgetStyleMatcher):
+            self.discover_widget_styles(widget)
+            ctx = self.store.contexts.get(id(widget))
         # Wire up the toggled signal for checkable widgets (idempotent).
         self.connect_checkable(widget)
         # Skip widgets that no animated/effect rule could ever touch.

@@ -8,10 +8,12 @@ from qt_css_engine.animation.opacity import OpacityAnimation
 from qt_css_engine.animation.shadow import BoxShadowHandle
 from qt_css_engine.engine.evaluation import EvaluationCause
 from qt_css_engine.engine.handlers import lifecycle as lifecycle_handler
+from qt_css_engine.matching.local import WidgetStyleMatcher
 from qt_css_engine.qt_compat.QtCore import QTimer
 from qt_css_engine.qt_compat.QtWidgets import QApplication, QWidget
 from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.effect_policy import clear_engine_effect
+from qt_css_engine.style.writer import scoped_anim_style
 
 if TYPE_CHECKING:
     from qt_css_engine.css.model import StyleRule
@@ -47,6 +49,11 @@ def reload_rules(engine: TransitionEngine, rules: list[StyleRule]) -> None:
     engine.matcher.rules = rules
     engine.matcher.build_quick_filters()
     engine.matcher.clear_caches()
+    if isinstance(engine.matcher, WidgetStyleMatcher):
+        for wid, source in engine.matcher.sources.items():
+            if source.is_master and (ctx := engine.store.contexts.get(wid)) is not None:
+                ctx.style.local_sheet = source
+                ctx.style.local_overlay_selectors = None
     prev_animated_widgets = clear_reload_styles(engine, animated_widgets)
     effect_only_widgets = WeakSet(widget for widget in animated_widgets if id(widget) not in inline_widget_ids)
     QTimer.singleShot(
@@ -78,7 +85,7 @@ def clear_reload_styles(engine: TransitionEngine, animated_widgets: set[QWidget]
             ctx.css_anim_props.clear()
             ctx.active_pseudos.clear()
             ctx.applied_style = None
-            widget.setStyleSheet("")
+            widget.setStyleSheet(scoped_anim_style(widget, {}, ctx) if ctx.style.local_sheet is not None else "")
         except RuntimeError:
             pass
     app = QApplication.instance()
@@ -91,7 +98,9 @@ def clear_reload_styles(engine: TransitionEngine, animated_widgets: set[QWidget]
                 if ctx is not None and ctx.css_anim_props:
                     ctx.css_anim_props.clear()
                     ctx.applied_style = None
-                    widget.setStyleSheet("")
+                    widget.setStyleSheet(
+                        scoped_anim_style(widget, {}, ctx) if ctx.style.local_sheet is not None else ""
+                    )
             except RuntimeError:
                 pass
     return prev_animated_widgets
@@ -101,6 +110,14 @@ def reeval_reload_widgets_deferred(
     engine: TransitionEngine, effect_only_widgets: Iterable[QWidget], prev_animated_widgets: Mapping[int, QWidget]
 ) -> None:
     """Re-evaluate widgets that need engine-managed state after a hot-reload stylesheet change."""
+    if isinstance(engine.matcher, WidgetStyleMatcher):
+        # Local transitions survive a master reload, even without effects/radii.
+        for widget in prev_animated_widgets.values():
+            try:
+                if engine.should_evaluate(widget):
+                    engine.evaluate_widget_state(widget, cause=EvaluationCause.RULE_RELOAD)
+            except RuntimeError:
+                pass
     for widget in effect_only_widgets:
         try:
             widget.objectName()

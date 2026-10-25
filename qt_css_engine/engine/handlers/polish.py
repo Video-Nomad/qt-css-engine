@@ -38,6 +38,7 @@ class PolishQueue:
             if w is None:
                 continue
             try:
+                engine.prepare_widget_style(w)
                 # One shared matching_rules() lookup for hover/active/evaluate.
                 rules: list[StyleRule] | None = None
                 if engine.should_evaluate(w):

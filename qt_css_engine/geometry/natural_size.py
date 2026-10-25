@@ -53,7 +53,7 @@ def get_natural_size(
     was_result: str | None = None
     try:
         with suppress(ctx, InternalWriteReason.MEASURE):
-            widget.setStyleSheet(_scoped(widget, stripped))
+            widget.setStyleSheet(_scoped(widget, stripped, ctx))
             if parent_layout is not None:
                 for w_ in ancestors:
                     w_.updateGeometry()
@@ -68,7 +68,7 @@ def get_natural_size(
             else:
                 was_result = get_preferred_size_fallback(widget, base_props, prop)
             # Restore inside suppress so the Polish triggered by setStyleSheet is ignored
-            restored = _scoped(widget, restore_props)
+            restored = _scoped(widget, restore_props, ctx)
             ctx.applied_style = restored
             widget.setStyleSheet(restored)
             if parent_layout is not None:

@@ -119,6 +119,193 @@ def make_card(title: str, subtitle: str) -> tuple[QFrame, QVBoxLayout]:
     return card, body
 
 
+def make_local_styles_card(engine: TransitionEngine) -> QFrame:
+    """Show widget-local styles and widgets created with local QSS at runtime."""
+    card, body = make_card(
+        "Widget-local styles",
+        "Hover or press the first button, toggle the checked button, and compare the scoped labels. "
+        "The engine keeps transition declarations and passes cleaned QSS to Qt. "
+        "Use the controls to add styled widgets after startup.",
+    )
+    card.setObjectName("local-styles-card")
+
+    examples_frame = QFrame()
+    examples_grid = QGridLayout(examples_frame)
+    examples_grid.setContentsMargins(0, 0, 0, 0)
+    examples_grid.setHorizontalSpacing(8)
+    examples_grid.setVerticalSpacing(8)
+
+    local_button = QPushButton("Local QSS — hover / press")
+    local_button.setCursor(Qt.CursorShape.PointingHandCursor)
+    local_button.setFixedHeight(44)
+    engine.set_widget_stylesheet(
+        local_button,
+        "QPushButton { background-color: #334155; color: #f8fafc; border: 2px solid #64748b; "
+        "border-radius: 8px; padding: 8px 12px; transition: background-color 240ms ease, "
+        "border-color 240ms ease, border-radius 240ms ease, color 240ms ease; } "
+        "QPushButton:hover { background-color: #0f766e; color: #ecfeff; border-color: #5eead4; "
+        "border-radius: 18px; } "
+        "QPushButton:pressed { background-color: #9a3412; color: #fff7ed; border-color: #fdba74; }",
+    )
+    examples_grid.addWidget(local_button, 0, 0)
+
+    checked_button = QPushButton("Local :checked — toggle me")
+    checked_button.setCheckable(True)
+    checked_button.setCursor(Qt.CursorShape.PointingHandCursor)
+    checked_button.setFixedHeight(44)
+    engine.set_widget_stylesheet(
+        checked_button,
+        "QPushButton { background-color: #3f3f46; color: #e4e4e7; border: 2px solid #71717a; "
+        "border-radius: 8px; padding: 8px 12px; transition: background-color 280ms ease, "
+        "border-color 280ms ease, color 280ms ease; } "
+        "QPushButton:checked { background-color: #166534; color: #f0fdf4; border-color: #4ade80; }",
+    )
+    examples_grid.addWidget(checked_button, 0, 1)
+
+    static_label = QLabel("Declaration-only QSS — static padding and colors")
+    static_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    static_label.setWordWrap(True)
+    static_label.setStyleSheet(
+        "color: #fef3c7; background-color: #78350f; padding: 12px; border: 2px solid #f59e0b; border-radius: 8px;"
+    )
+    examples_grid.addWidget(static_label, 1, 0, 1, 2)
+    examples_grid.setColumnStretch(0, 1)
+    examples_grid.setColumnStretch(1, 1)
+    body.addWidget(examples_frame)
+
+    scoped_box = QFrame()
+    scoped_box.setObjectName("local-styles-scope-box")
+    engine.set_widget_stylesheet(
+        scoped_box,
+        "QFrame#local-styles-scope-box { background-color: #172554; border: 1px solid #3b82f6; border-radius: 10px; } "
+        "QLabel { color: #a5f3fc; font-weight: 600; transition: color 280ms ease; } "
+        "QLabel:hover { color: #fbbf24; } "
+        "QPushButton { background-color: #1e3a8a; color: #eff6ff; border: 1px solid #60a5fa; "
+        "border-radius: 7px; padding: 7px 10px; transition: background-color 260ms ease; } "
+        "QPushButton:hover { background-color: #2563eb; }",
+    )
+    scoped_layout = QVBoxLayout(scoped_box)
+    scoped_layout.setContentsMargins(12, 10, 12, 10)
+    scoped_layout.setSpacing(8)
+    scoped_caption = QLabel("Inherited from the container: cyan text; hover this label for amber.")
+    scoped_caption.setWordWrap(True)
+    scoped_layout.addWidget(scoped_caption)
+
+    override_label = QLabel("Child-local override: pink text; hover for white.")
+    override_label.setWordWrap(True)
+    engine.set_widget_stylesheet(
+        override_label,
+        "QLabel { color: #f9a8d4; font-weight: 700; transition: color 280ms ease; } QLabel:hover { color: #ffffff; }",
+    )
+    scoped_layout.addWidget(override_label)
+
+    scoped_button = QPushButton("Container-local button — hover blue")
+    scoped_button.setCursor(Qt.CursorShape.PointingHandCursor)
+    scoped_layout.addWidget(scoped_button, 0, Qt.AlignmentFlag.AlignLeft)
+    body.addWidget(scoped_box)
+    body.addWidget(
+        make_hint("The container supplies descendant rules; the pink label's own local QSS takes precedence.")
+    )
+
+    runtime_controls, controls_row = make_row(spacing=8)
+    add_cached = QPushButton("Add identical QSS")
+    add_cached.setObjectName("local-styles-add-identical")
+    add_unique = QPushButton("Add unique QSS")
+    add_unique.setObjectName("local-styles-add-unique")
+    remove_last = QPushButton("Remove last")
+    remove_last.setObjectName("local-styles-remove-last")
+    clear_all = QPushButton("Clear all")
+    clear_all.setObjectName("local-styles-clear-all")
+    for control in (add_cached, add_unique, remove_last, clear_all):
+        control.setFixedHeight(40)
+        control.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        controls_row.addWidget(control)
+    body.addWidget(runtime_controls)
+
+    count_label = QLabel("0 local runtime widgets")
+    count_label.setProperty("class", "hint")
+    body.addWidget(count_label)
+
+    runtime_host = QFrame()
+    runtime_host.setObjectName("local-styles-runtime-host")
+    runtime_host.setStyleSheet(
+        "QFrame#local-styles-runtime-host { background-color: #18181b; border: 1px dashed #52525b; border-radius: 8px; }"
+    )
+    runtime_layout = QVBoxLayout(runtime_host)
+    runtime_layout.setContentsMargins(10, 10, 10, 10)
+    runtime_layout.setSpacing(8)
+    placeholder = QLabel("Local-QSS widgets appear here…")
+    placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    placeholder.setStyleSheet("color: #a1a1aa; padding: 10px;")
+    runtime_layout.addWidget(placeholder)
+    body.addWidget(runtime_host)
+
+    runtime_buttons: list[QPushButton] = []
+    unique_count = 0
+
+    def update_runtime_status() -> None:
+        count_label.setText(f"{len(runtime_buttons)} local runtime widget{'s' if len(runtime_buttons) != 1 else ''}")
+        placeholder.setVisible(not runtime_buttons)
+
+    def add_runtime_widget(*, unique: bool) -> None:
+        nonlocal unique_count
+        if unique:
+            unique_count += 1
+            color_pairs = (("#7c2d12", "#fb923c"), ("#3f6212", "#a3e635"), ("#701a75", "#e879f9"))
+            background, border = color_pairs[(unique_count - 1) % len(color_pairs)]
+            object_name = f"local-dynamic-{unique_count}"
+            text = f"Unique local QSS #{unique_count} ({object_name})"
+            qss = (
+                f"QPushButton#{object_name} {{ background-color: {background}; color: #fff; border: 2px solid {border}; "
+                "border-radius: 8px; padding: 8px 12px; transition: background-color 260ms ease, "
+                "border-color 260ms ease, border-radius 260ms ease, color 260ms ease; } "
+                f"QPushButton#{object_name}:hover {{ background-color: {border}; color: #111827; "
+                "border-color: #fff; border-radius: 18px; }"
+            )
+        else:
+            object_name = ""
+            text = "Identical local QSS — cached stylesheet"
+            qss = (
+                "QPushButton { background-color: #164e63; color: #ecfeff; border: 2px solid #22d3ee; "
+                "border-radius: 8px; padding: 8px 12px; transition: background-color 260ms ease, "
+                "border-color 260ms ease, border-radius 260ms ease; } "
+                "QPushButton:hover { background-color: #0e7490; border-color: #a5f3fc; border-radius: 18px; }"
+            )
+
+        button = QPushButton(text)
+        if object_name:
+            button.setObjectName(object_name)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFixedHeight(42)
+        engine.set_widget_stylesheet(button, qss)
+        runtime_buttons.append(button)
+        runtime_layout.addWidget(button)
+        update_runtime_status()
+
+    def remove_runtime_widget() -> None:
+        if not runtime_buttons:
+            return
+        button = runtime_buttons.pop()
+        runtime_layout.removeWidget(button)
+        button.deleteLater()
+        update_runtime_status()
+
+    def clear_runtime_widgets() -> None:
+        while runtime_buttons:
+            remove_runtime_widget()
+
+    add_cached.clicked.connect(lambda: add_runtime_widget(unique=False))
+    add_unique.clicked.connect(lambda: add_runtime_widget(unique=True))
+    remove_last.clicked.connect(remove_runtime_widget)
+    clear_all.clicked.connect(clear_runtime_widgets)
+    body.addWidget(
+        make_hint(
+            "The identical control reuses one QSS string; unique buttons use objectName selectors and distinct colors."
+        )
+    )
+    return card
+
+
 def make_row(spacing: int = 8) -> tuple[QFrame, QHBoxLayout]:
     """Bare horizontal row container (no frame styling)."""
     frame = QFrame()
@@ -165,7 +352,7 @@ def main() -> None:
 
     cleaned_qss, rules = extract_rules(stylesheet)
     app.setStyleSheet(cleaned_qss)
-    engine = TransitionEngine(rules)
+    engine = TransitionEngine(rules, collect_widget_styles=True)
     app.installEventFilter(engine)
 
     # Hot-reload: watch styles.css for changes.
@@ -248,6 +435,7 @@ def main() -> None:
         ("dual", "Base + target timing"),
         ("size", "Size and shape"),
         ("dynamic", "Dynamic classes"),
+        ("local-styles", "Widget-local styles"),
         ("nesting", "Nesting and scope"),
         ("attrs", "Attributes & specificity"),
         ("playground", "Playground"),
@@ -533,11 +721,27 @@ def main() -> None:
     reset_grid.setVerticalSpacing(18)
     reset_examples = [
         ("reset-btn", "Animated baseline", "all 900ms + color 1400ms: shape, background, border and text animate."),
-        ("reset-btn reset-off", "Everything snaps", "transition: none clears both the all fallback and explicit text timing."),
+        (
+            "reset-btn reset-off",
+            "Everything snaps",
+            "transition: none clears both the all fallback and explicit text timing.",
+        ),
         ("reset-btn reset-property", "Longhand reset", "transition-property: none gives the same immediate changes."),
-        ("reset-btn reset-text", "Only text animates", "none, then color 600ms: text eases; the background, border and corners snap."),
-        ("reset-btn reset-hover", "Snap in, animate out", "none on :hover: entering snaps; leaving restores the base timings."),
-        ("reset-btn reset-stop", "Hover, then press and hold", "Press during the animation to stop it and snap to green. Release to animate back."),
+        (
+            "reset-btn reset-text",
+            "Only text animates",
+            "none, then color 600ms: text eases; the background, border and corners snap.",
+        ),
+        (
+            "reset-btn reset-hover",
+            "Snap in, animate out",
+            "none on :hover: entering snaps; leaving restores the base timings.",
+        ),
+        (
+            "reset-btn reset-stop",
+            "Hover, then press and hold",
+            "Press during the animation to stop it and snap to green. Release to animate back.",
+        ),
     ]
     for i, (cls, text, hint) in enumerate(reset_examples):
         example = QVBoxLayout()
@@ -690,6 +894,11 @@ def main() -> None:
     content_layout.addWidget(dyn_card)
     cards["dynamic"] = dyn_card
 
+    # ------------------------------------------------- widget-local styles
+    local_styles_card = make_local_styles_card(engine)
+    content_layout.addWidget(local_styles_card)
+    cards["local-styles"] = local_styles_card
+
     # ------------------------------------------------- 10. nesting & scope
     nest_card, nest_body = make_card(
         "Nesting & scope",
@@ -798,7 +1007,9 @@ def main() -> None:
     spec_row.addWidget(typeid_btn)
     attr_body.addWidget(spec_row_frame)
     attr_body.addWidget(
-        make_hint("#spec-id stays blue even though .spec-btn comes later. The Type#id button only matches QPushButton + that name.")
+        make_hint(
+            "#spec-id stays blue even though .spec-btn comes later. The Type#id button only matches QPushButton + that name."
+        )
     )
     content_layout.addWidget(attr_card)
     cards["attrs"] = attr_card

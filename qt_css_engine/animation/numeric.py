@@ -60,7 +60,7 @@ class GenericPropertyAnimation(StepsReversalMixin, WidgetAnimation):
         if self._ctx is not None and self._style_flush_callback is not None:
             self._style_flush_callback(self.widget, self._ctx)
             return
-        self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+        self.widget.setStyleSheet(scoped_anim_style(self.widget, props, self._ctx))
         if update_shadow:
             update_shadow_ancestor(self.widget)
 

@@ -41,13 +41,15 @@ style writes and repolishing exercise Qt's stylesheet machinery too.
 | `warm` | Matching with primed caches; 100 passes per sample, reported as milliseconds per **one 321-widget pass**. |
 | `attr_cold`, `attr_warm` | Matching plus live attribute predicates, as used by the cascade. Half the 40 buttons have `active=true`. Warm samples use 100 passes and the same per-pass normalization. |
 | `initial`, `attr_initial` | New engine/index construction, 321 delivered Polish events, and queued engine work until settled. Each sample has a fresh tree with static QSS already installed. CSS parsing, tree creation, native first show, and destruction are excluded. |
+| `local_disabled`, `local_empty`, `local_repeated`, `local_unique` | New engine construction, native `ensurePolished()`, and three event-loop drains on a fresh 321-widget tree with 40 master transition targets. Includes discovery, local CSS parsing/compilation, and Qt polish/style writes. Local sheets are empty, one identical declaration-only sheet on 320 labels, or 320 distinct sheets. The disabled control has empty local sheets. Tree creation, authored stylesheet assignment, master parsing, first show, and destruction are excluded. |
 | `class_change`, `attr` | A synchronous burst of 40 property changes through Qt's event filter, including repolish and creation of 200 animations. Deferred flushes, layout, painting and animation ticks are excluded. |
 | `hover` | 40 delivered `QHoverEvent` enters through the event filter, including creation of 200 animations. Like the property-change cases, deferred work is excluded. |
 | `class_anim`, `hover_anim` | 15 synthetic frames at 20–300 ms for 40 × 5 animations, including deferred style/layout work and final completion callbacks. Trigger/setup work is excluded. Results are per **15-frame sequence**, not FPS or per-frame latency. |
 | `resize` | One actual resize on each of 100 labels, from 120×30 to 122×34, plus queued clamp/style work. Layouts are frozen beforehand so they cannot undo or multiply the resizes. Each radius must change from 15 to 17 px. |
 
 These are fixed workload regression benchmarks, not exhaustive engine coverage.
-They do not currently measure parsing, hot reload, reparenting, effects, or
+Only the `local_*` scenarios include local parsing and initial native polish;
+the other scenarios exclude parsing. The suite does not measure hot reload, reparenting, effects, or
 real-time paint/compositor throughput. Class and attribute scenarios also have
 different rule counts; compare each scenario to itself across engine revisions.
 

@@ -10,6 +10,7 @@ from qt_css_engine.matching.compiler import WidgetIdentity
 
 @dataclass
 class QuickFilter:
+    unconditional: bool = False
     tags: set[str] = field(default_factory=set)
     classes: set[str] = field(default_factory=set)
     ids: set[str] = field(default_factory=set)
@@ -50,6 +51,7 @@ class StyleIndex:
     ancestor: AncestorFilter = field(default_factory=AncestorFilter)
 
     def clear(self) -> None:
+        self.quick.unconditional = False
         self.quick.tags.clear()
         self.quick.classes.clear()
         self.quick.ids.clear()
