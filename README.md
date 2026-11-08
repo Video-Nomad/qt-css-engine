@@ -10,11 +10,7 @@ Subcontrols (e.g `::item`, `::handle`) are not supported because they are not re
 
 `extract_rules()` splits comma-separated selectors into separate blocks in the cleaned QSS, preserving their order. This also applies to static rules and subcontrols.
 
-This engine was made primarily for use in [YASB](https://github.com/amnweb/yasb) project and this will be the main focus for now, but it can be integrated into any Qt application.
-
 This is not a full CSS3 spec port. It has some very important Qt-specific differences, especially when it comes to transition property accumulation vs overriding.
-
-**WARNING: This project is still in early development, very experimental and is not ready for production use. There will be bugs and breaking changes.**
 
 ## Python and Qt version
 
