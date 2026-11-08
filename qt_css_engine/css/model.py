@@ -32,6 +32,8 @@ class StyleRule:
     order: int = 0
     # The parser keeps only specs after the last explicit `none` in this block.
     resets_transitions: bool = False
+    # Master = 0; successively nearer widget stylesheet sources have higher ranks.
+    scope_rank: int = 0
 
     has_effect_props: bool = field(init=False, default=False)
     has_cursor_prop: bool = field(init=False, default=False)
@@ -42,3 +44,11 @@ class StyleRule:
         self.has_effect_props = not keys.isdisjoint(EFFECT_PROPS)
         self.has_cursor_prop = "cursor" in keys
         self.has_border_radius_props = not keys.isdisjoint(BORDER_RADIUS_PROPS)
+
+
+class ParsedStyleRules(list[StyleRule]):
+    """A normal rule list retaining its companion static QSS for source recognition."""
+
+    def __init__(self, rules: list[StyleRule], qss: str) -> None:
+        super().__init__(rules)
+        self.qss = qss

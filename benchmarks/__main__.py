@@ -17,6 +17,7 @@ from benchmarks import (
     bench_hover_change,
     bench_hover_frames,
     bench_initial_eval,
+    bench_local_styles,
     bench_resize_storm,
     bench_warm_matching,
 )
@@ -36,6 +37,10 @@ ALL_BENCHES: list[BenchEntry] = [
     BenchEntry("cold", bench_cold_matching.NAME, bench_cold_matching.benchmark),
     BenchEntry("warm", bench_warm_matching.NAME, bench_warm_matching.benchmark),
     BenchEntry("initial", bench_initial_eval.NAME, bench_initial_eval.benchmark),
+    BenchEntry("local_disabled", "Polish / collection disabled", bench_local_styles.benchmark_disabled),
+    BenchEntry("local_empty", "Polish / empty local sheets", bench_local_styles.benchmark_empty),
+    BenchEntry("local_repeated", "Polish / repeated local sheet", bench_local_styles.benchmark_repeated),
+    BenchEntry("local_unique", "Polish / unique local sheets", bench_local_styles.benchmark_unique),
     BenchEntry("attr_cold", bench_attr_matching.NAME_COLD, bench_attr_matching.benchmark_cold),
     BenchEntry("attr_warm", bench_attr_matching.NAME_WARM, bench_attr_matching.benchmark_warm),
     BenchEntry("attr_initial", bench_attr_matching.NAME_INITIAL, bench_attr_matching.benchmark_initial),

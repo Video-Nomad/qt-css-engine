@@ -45,7 +45,7 @@ def on_widget_destroyed(engine: TransitionEngine, wid: int) -> None:
     if (finalizer := engine.widget_finalizers.pop(wid, None)) is not None:
         finalizer.detach()
     engine.connected_checkable_ids.discard(wid)
-    engine.matcher.invalidate_widget_id(wid)
+    engine.matcher.forget_widget_id(wid)
     engine.active_rule_widgets.pop(wid, None)
     engine.store.widgets.pop(wid, None)
     ctx = engine.store.contexts.pop(wid, None)

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from qt_css_engine.animation.factory import Animation
+    from qt_css_engine.matching.local import LocalStyleSheet
     from qt_css_engine.qt_compat.QtCore import QTimer
     from qt_css_engine.state.suppress import InternalWriteReason
 
@@ -33,6 +34,8 @@ class AnimState:
 
 @dataclass
 class StyleState:
+    local_sheet: LocalStyleSheet | None = None
+    local_overlay_selectors: tuple[str, ...] | None = None
     css_props: dict[str, str] = field(default_factory=dict)
     box_props: dict[str, str] = field(default_factory=dict)
     applied_style: str | None = None

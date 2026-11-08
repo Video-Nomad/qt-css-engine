@@ -452,7 +452,7 @@ def test_apply_prop_resolved_none_noop(_app: QApplication) -> None:
         destroy(widget)
 
 
-def test_resolve_no_base_value_starts_from_target(_app: QApplication) -> None:
+def test_resolve_no_base_color_starts_from_default(_app: QApplication) -> None:
     engine = make_engine(".x { color: red; }")
     widget = QWidget()
     try:
@@ -460,7 +460,21 @@ def test_resolve_no_base_value_starts_from_target(_app: QApplication) -> None:
         ev = Evaluation(widget, ctx, ResolvedRuleState(target_props={"color": "blue"}), EvaluationCause.PSEUDO_STATE)
         resolved = engine.evaluator.resolve_property(ev, "color")
         assert resolved is not None
-        assert resolved.current == resolved.target == "blue"
+        assert resolved.current == "white"
+        assert resolved.target == "blue"
+    finally:
+        destroy(widget)
+
+
+def test_resolve_no_base_noncolor_starts_from_target(_app: QApplication) -> None:
+    engine = make_engine(".x { opacity: 1; }")
+    widget = QWidget()
+    try:
+        ctx = engine.get_context(widget)
+        ev = Evaluation(widget, ctx, ResolvedRuleState(target_props={"opacity": "0.5"}), EvaluationCause.PSEUDO_STATE)
+        resolved = engine.evaluator.resolve_property(ev, "opacity")
+        assert resolved is not None
+        assert resolved.current == resolved.target == "0.5"
     finally:
         destroy(widget)
 

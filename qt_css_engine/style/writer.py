@@ -15,7 +15,10 @@ from qt_css_engine.utils.parsing import parse_css_numeric
 _scope_counter = itertools.count(1)
 
 
-def scoped_anim_style(widget: QWidget, props: dict[str, str]) -> str:
+def scoped_anim_style(widget: QWidget, props: dict[str, str], ctx: WidgetState | None = None) -> str:
+    source = ctx.style.local_sheet if ctx is not None else None
+    if source is not None and not props:
+        return source.qss
     selector: str | None = getattr(widget, "_anim_scope_selector", None)
     if selector is None:
         scope_id: str = widget.property("_anim_scope") or ""
@@ -25,6 +28,15 @@ def scoped_anim_style(widget: QWidget, props: dict[str, str]) -> str:
         selector = f'{type(widget).__name__}[_anim_scope="{scope_id}"]'
         setattr(widget, "_anim_scope_selector", selector)
     props_str = " ".join(f"{p}: {v};" for p, v in props.items())
+    if source is not None and ctx is not None:
+        selectors = ctx.style.local_overlay_selectors
+        if selectors is None:
+            scope = f'[_anim_scope="{widget.property("_anim_scope")}"]'
+            selectors = tuple(
+                dict.fromkeys((selector, *(head + scope + tail for head, tail in source.overlay_selectors)))
+            )
+            ctx.style.local_overlay_selectors = selectors
+        return source.qss + "\n" + "\n".join(f"{item} {{ {props_str} }}" for item in selectors)
     return f"{selector} {{ {props_str} }}"
 
 
@@ -92,7 +104,7 @@ class StyleWriter:
         """Normalize interdependent inline props and apply them as one scoped stylesheet."""
         ctx.style_flush_pending = False
         self.normalize(widget, ctx)
-        style = scoped_anim_style(widget, ctx.css_anim_props)
+        style = scoped_anim_style(widget, ctx.css_anim_props, ctx)
         # setStyleSheet() re-parses the sheet and repolishes the widget and its children even
         # when the text is unchanged. Evaluations that resolve to the same inline style are
         # common (re-entered hover, polish sweeps, ticks that round to the same value), so

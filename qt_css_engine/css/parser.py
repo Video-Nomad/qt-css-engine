@@ -11,7 +11,7 @@ import tinycss2
 from tinycss2.ast import Node, QualifiedRule
 
 from qt_css_engine.css.gradients import translate_gradients
-from qt_css_engine.css.model import StyleRule, TransitionSpec
+from qt_css_engine.css.model import ParsedStyleRules, StyleRule, TransitionSpec
 from qt_css_engine.css.selector import split_selector
 from qt_css_engine.css.shorthand import expand_shorthand, static_declarations, transition_longhands
 from qt_css_engine.matching.compiler import compute_specificity
@@ -281,4 +281,5 @@ def extract_rules(stylesheet: str) -> tuple[str, list[StyleRule]]:
             cleaned_parts.append(f"{selector} {{\n" + "\n".join(new_body_lines) + "\n}")
         else:
             cleaned_parts.append(f"{selector} {{ }}")
-    return "\n\n".join(cleaned_parts), rules
+    cleaned_qss = "\n\n".join(cleaned_parts)
+    return cleaned_qss, ParsedStyleRules(rules, cleaned_qss)

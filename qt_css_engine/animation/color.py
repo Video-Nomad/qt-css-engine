@@ -9,7 +9,7 @@ from qt_css_engine.qt_compat.QtGui import QColor
 from qt_css_engine.qt_compat.QtWidgets import QWidget
 from qt_css_engine.state.widget_state import WidgetState
 from qt_css_engine.style.effects import update_shadow_ancestor
-from qt_css_engine.style.writer import scoped_anim_style
+from qt_css_engine.style.writer import StyleWriter, scoped_anim_style
 from qt_css_engine.utils.color import lerp_oklab_premul, parse_color, to_oklab_premul
 
 
@@ -57,7 +57,7 @@ class ColorAnimation(StepsReversalMixin, WidgetAnimation):
         if self._ctx is not None and self._style_flush_callback is not None:
             self._style_flush_callback(self.widget, self._ctx)
             return
-        self.widget.setStyleSheet(scoped_anim_style(self.widget, props))
+        self.widget.setStyleSheet(scoped_anim_style(self.widget, props, self._ctx))
         if update_shadow:
             update_shadow_ancestor(self.widget)
 
@@ -87,11 +87,7 @@ class ColorAnimation(StepsReversalMixin, WidgetAnimation):
             return
         ctx.style_flush_pending = False
         try:
-            style = scoped_anim_style(self.widget, props)
-            if style != ctx.applied_style or self.widget.styleSheet() != style:
-                ctx.applied_style = style
-                self.widget.setStyleSheet(style)
-            update_shadow_ancestor(self.widget)
+            StyleWriter().flush_now(self.widget, ctx)
         except RuntimeError:
             pass
 

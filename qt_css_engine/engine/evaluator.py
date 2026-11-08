@@ -252,8 +252,9 @@ class WidgetEvaluator:
         if not target:
             return None
         if prop not in SIZE_PROPS and prop not in ev.ctx.css_anim_props and base_props.get(prop) in (None, "", "auto"):
-            # No defined base value: start from target so we snap instead of animating from garbage.
-            current = target
+            # Missing colors start from the same fallback used on return to the base state.
+            # Other non-size properties have no implicit start value, so keep snapping them.
+            current = self._default_color_raw(prop) if self._is_color_prop(prop) else target
         return ResolvedProperty(
             animation=animation,
             current=current,
@@ -298,8 +299,8 @@ class WidgetEvaluator:
         if not target_raw:
             if prop in SIZE_PROPS:
                 target_raw = natural_hint or self.get_natural_size(widget, base_props, prop, current_raw)
-            elif "color" in prop:
-                target_raw = "white" if prop == "color" else "transparent"
+            elif self._is_color_prop(prop):
+                target_raw = self._default_color_raw(prop)
         return target_raw or "", is_natural_target
 
     def _natural_hint(self, ev: Evaluation, prop: str, anim_obj: Animation | None) -> str | None:
@@ -561,6 +562,11 @@ class WidgetEvaluator:
     def _is_color_prop(prop: str) -> bool:
         """QSS color properties handled by ColorAnimation."""
         return prop == "color" or prop.endswith("-color")
+
+    @staticmethod
+    def _default_color_raw(prop: str) -> str:
+        """Implicit base endpoint shared by the first transition and its reversal."""
+        return "white" if prop == "color" else "transparent"
 
     @staticmethod
     def _is_interpolable_color(value: str) -> bool:
